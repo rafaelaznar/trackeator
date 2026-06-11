@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tracker Inversiones</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --surface: #191919;
+    --border: #2a2a2a;
+    --text: #e0e0e0;
+    --muted: #666;
+    --accent: #c8f542;
+    --danger: #ff4444;
+    --warn: #f59e0b;
+    --font-mono: 'Courier New', monospace;
+    --font-sans: system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+  header .header-actions { display: flex; gap: 8px; }
+
+  .btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 11px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-family: var(--font-sans);
+    letter-spacing: .05em;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-accent { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+  .btn-accent:hover { background: #b5e030; color: #000; }
+  .btn-danger { border-color: var(--danger); color: var(--danger); }
+  .btn-danger:hover { background: var(--danger); color: #fff; }
+
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+
+  /* Gauges */
+  .gauges {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .gauge-cell {
+    background: var(--surface);
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .gauge-wrap { position: relative; width: 110px; height: 110px; }
+  .gauge-svg { transform: rotate(-90deg); }
+  .gauge-track { fill: none; stroke: var(--border); stroke-width: 8; }
+  .gauge-fill { fill: none; stroke-width: 8; stroke-linecap: butt; transition: stroke-dashoffset .6s ease, stroke .3s; }
+  .gauge-center {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  .gauge-pct { font-size: 22px; font-family: var(--font-mono); font-weight: 700; line-height: 1; }
+  .gauge-lbl { font-size: 9px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; margin-top: 2px; }
+  .gauge-title { font-size: 10px; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
+  .gauge-sub { font-size: 10px; color: var(--muted); }
+
+  /* Warning banner */
+  #warning-banner {
+    display: none;
+    background: #1a0000;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    padding: 8px 12px;
+    font-size: 11px;
+    margin-bottom: 16px;
+    letter-spacing: .04em;
+  }
+  #warning-banner.warn-yellow {
+    background: #1a1200;
+    border-color: var(--warn);
+    color: var(--warn);
+  }
+
+  /* Panels */
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 600px) { .panels { grid-template-columns: 1fr; } .gauges { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 14px;
+  }
+  .panel-title {
+    font-size: 9px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px;
+  }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-size: 10px; color: var(--muted); margin-bottom: 3px; letter-spacing: .04em; }
+  .field input, .field select {
+    width: 100%; background: var(--bg);
+    border: 1px solid var(--border); color: var(--text);
+    font-size: 12px; padding: 5px 8px; font-family: var(--font-mono);
+    outline: none;
+  }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .field select option { background: var(--bg); }
+
+  /* Stats row */
+  .stats-row {
+    display: flex; gap: 1px; background: var(--border);
+    border: 1px solid var(--border); margin-bottom: 16px;
+  }
+  .stat {
+    flex: 1; background: var(--surface);
+    padding: 10px 12px;
+  }
+  .stat-label { font-size: 9px; color: var(--muted); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 3px; }
+  .stat-value { font-family: var(--font-mono); font-size: 14px; }
+  .stat-value.accent { color: var(--accent); }
+  .stat-value.danger { color: var(--danger); }
+  .stat-value.warn { color: var(--warn); }
+
+  /* Ops */
+  .op-tabs { display: flex; gap: 0; margin-bottom: 0; }
+  .op-tab {
+    flex: 1; padding: 7px; text-align: center; cursor: pointer;
+    font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+    background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  }
+  .op-tab.active { background: var(--surface); color: var(--text); border-bottom-color: var(--surface); }
+  .op-tab:first-child { border-right: none; }
+  .op-form {
+    background: var(--surface); border: 1px solid var(--border);
+    border-top: none; padding: 14px; margin-bottom: 16px;
+    display: none;
+  }
+  .op-form.active { display: block; }
+
+  /* Chart */
+  .chart-panel {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 14px; margin-bottom: 16px;
+  }
+  .chart-panel canvas { max-height: 180px; }
+
+  /* History table */
+  .history-panel { background: var(--surface); border: 1px solid var(--border); padding: 14px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+    text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); font-weight: 400; }
+  td { padding: 5px 6px; border-bottom: 1px solid #1e1e1e; font-family: var(--font-mono); font-size: 11px; }
+  tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; padding: 1px 5px; font-size: 9px; letter-spacing: .08em; }
+  .tag-buy { background: #0d2200; color: var(--accent); }
+  .tag-sell { background: #220d00; color: #f59e0b; }
+  .no-data { color: var(--muted); font-size: 11px; text-align: center; padding: 20px; }
+
+  /* Modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.8); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border);
+    padding: 20px; width: min(420px, 92vw); max-height: 90vh; overflow-y: auto;
+  }
+  .modal-title { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; margin-bottom: 16px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+  .setup-required {
+    border: 1px solid var(--border); padding: 40px 20px;
+    text-align: center; margin-bottom: 16px;
+  }
+  .setup-required p { color: var(--muted); margin-bottom: 14px; font-size: 11px; }
+
+  .risk-help { font-size: 10px; color: var(--muted); margin-top: 4px; }
+
+  input[type=file] { display: none; }
+
+  .btn-icon {
+    background: none; border: none; cursor: pointer;
+    font-size: 11px; padding: 2px 5px; color: var(--muted);
+    font-family: var(--font-sans);
+  }
+  .btn-icon:hover { color: var(--accent); }
+  .btn-icon.del:hover { color: var(--danger); }
+  td.actions { white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Tracker de Inversiones</h1>
+  <div class="header-actions">
+    <button class="btn" onclick="openSettings()">Configuración</button>
+    <button class="btn" onclick="exportData()">Exportar</button>
+    <label class="btn" style="cursor:pointer">Importar<input type="file" id="import-file" accept=".json" onchange="importData(event)"></label>
+  </div>
+</header>
+
+<main>
+
+  <!-- Setup prompt -->
+  <div id="setup-prompt" class="setup-required" style="display:none">
+    <p>Configura los datos iniciales para empezar a hacer seguimiento de tus inversiones.</p>
+    <button class="btn btn-accent" onclick="openSettings()">Configurar ahora</button>
+  </div>
+
+  <!-- Gauges -->
+  <div class="gauges" id="main-ui">
+    <div class="gauge-cell">
+      <div class="gauge-title">Capital invertido</div>
+      <div class="gauge-wrap">
+        <svg class="gauge-svg" width="110" height="110" viewBox="0 0 110 110">
+          <circle class="gauge-track" cx="55" cy="55" r="45"/>
+          <circle class="gauge-fill" id="g-inv" cx="55" cy="55" r="45"
+            stroke="#c8f542" stroke-dasharray="282.74" stroke-dashoffset="282.74"/>
+        </svg>
+        <div class="gauge-center">
+          <span class="gauge-pct" id="pct-inv">0%</span>
+          <span class="gauge-lbl">invertido</span>
+        </div>
+      </div>
+      <div class="gauge-sub" id="inv-abs">0 € / 0 €</div>
+    </div>
+    <div class="gauge-cell">
+      <div class="gauge-title">Riesgo acumulado</div>
+      <div class="gauge-wrap">
+        <svg class="gauge-svg" width="110" height="110" viewBox="0 0 110 110">
+          <circle class="gauge-track" cx="55" cy="55" r="45"/>
+          <circle class="gauge-fill" id="g-risk" cx="55" cy="55" r="45"
+            stroke="#c8f542" stroke-dasharray="282.74" stroke-dashoffset="282.74"/>
+        </svg>
+        <div class="gauge-center">
+          <span class="gauge-pct" id="pct-risk">0%</span>
+          <span class="gauge-lbl">riesgo</span>
+        </div>
+      </div>
+      <div class="gauge-sub" id="risk-threshold">Umbral: — %</div>
+    </div>
+  </div>
+
+  <!-- Warning -->
+  <div id="warning-banner"></div>
+
+  <!-- Stats row -->
+  <div class="stats-row" id="stats-row">
+    <div class="stat">
+      <div class="stat-label">Capital total</div>
+      <div class="stat-value accent" id="s-total">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Invertido</div>
+      <div class="stat-value" id="s-invested">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Disponible</div>
+      <div class="stat-value" id="s-available">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Umbral riesgo</div>
+      <div class="stat-value" id="s-threshold">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Inicio</div>
+      <div class="stat-value" id="s-start">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Operaciones</div>
+      <div class="stat-value" id="s-ops">0</div>
+    </div>
+  </div>
+
+  <!-- Operation tabs -->
+  <div class="op-tabs">
+    <div class="op-tab active" id="tab-buy" onclick="switchTab('buy')">↑ Compra</div>
+    <div class="op-tab" id="tab-sell" onclick="switchTab('sell')">↓ Venta</div>
+  </div>
+
+  <!-- Buy form -->
+  <div class="op-form active" id="form-buy">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Importe (€)</label>
+        <input type="number" id="buy-amount" min="0" step="0.01" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>Riesgo (%)</label>
+        <input type="number" id="buy-risk" min="0" max="100" step="0.1" placeholder="0–100">
+      </div>
+      <div class="field">
+        <label>Fecha</label>
+        <input type="date" id="buy-date">
+      </div>
+    </div>
+    <div class="field">
+      <label>Descripción (opcional)</label>
+      <input type="text" id="buy-desc" placeholder="p. ej. ETF S&P500">
+    </div>
+    <button class="btn btn-accent" onclick="addOperation('buy')">Registrar compra</button>
+  </div>
+
+  <!-- Sell form -->
+  <div class="op-form" id="form-sell">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Importe (€)</label>
+        <input type="number" id="sell-amount" min="0" step="0.01" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>Fecha</label>
+        <input type="date" id="sell-date">
+      </div>
+    </div>
+    <div class="field">
+      <label>Descripción (opcional)</label>
+      <input type="text" id="sell-desc" placeholder="p. ej. Cierre posición ETF">
+    </div>
+    <button class="btn btn-accent" onclick="addOperation('sell')">Registrar venta</button>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-panel">
+    <div class="panel-title">Evolución histórica</div>
+    <canvas id="chart"></canvas>
+  </div>
+
+  <!-- History -->
+  <div class="history-panel">
+    <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>Historial de operaciones</span>
+      <button class="btn btn-danger" onclick="clearHistory()" style="font-size:9px;padding:2px 7px">Limpiar todo</button>
+    </div>
+    <div id="history-body"></div>
+  </div>
+
+</main>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="modal-settings">
+  <div class="modal">
+    <div class="modal-title">Configuración inicial</div>
+    <div class="field">
+      <label>Capital total disponible para invertir (€)</label>
+      <input type="number" id="cfg-total" min="0" step="0.01" placeholder="10000">
+    </div>
+    <div class="field">
+      <label>Fecha de inicio de la inversión</label>
+      <input type="date" id="cfg-start">
+    </div>
+    <div style="border-top:1px solid var(--border);margin:14px 0;padding-top:14px">
+      <div class="panel-title" style="margin-bottom:10px">Cálculo del umbral de riesgo</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="field">
+          <label>Edad del inversor (años)</label>
+          <input type="number" id="cfg-age" min="18" max="100" placeholder="40" oninput="recalcThreshold()">
+        </div>
+        <div class="field">
+          <label>% del capital sobre patrimonio total</label>
+          <input type="number" id="cfg-pct-wealth" min="1" max="100" placeholder="30" oninput="recalcThreshold()">
+          <div class="risk-help">ej: si tienes 100.000€ y vas a invertir 10.000€ → 10%</div>
+        </div>
+      </div>
+      <div class="field" style="margin-top:6px">
+        <label>Umbral de riesgo calculado (editable)</label>
+        <input type="number" id="cfg-threshold" min="0" max="100" step="0.1" placeholder="0–100">
+        <div class="risk-help" id="threshold-explain" style="margin-top:4px;line-height:1.6"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeSettings()">Cancelar</button>
+      <button class="btn btn-accent" onclick="saveSettings()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Operation Modal -->
+<div class="modal-overlay" id="modal-edit">
+  <div class="modal">
+    <div class="modal-title" id="edit-modal-title">Editar operación</div>
+    <input type="hidden" id="edit-index">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Tipo</label>
+        <select id="edit-type" onchange="toggleEditRisk()">
+          <option value="buy">Compra</option>
+          <option value="sell">Venta</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Fecha</label>
+        <input type="date" id="edit-date">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Importe (€)</label>
+        <input type="number" id="edit-amount" min="0" step="0.01">
+      </div>
+      <div class="field" id="edit-risk-field">
+        <label>Riesgo (%)</label>
+        <input type="number" id="edit-risk" min="0" max="100" step="0.1">
+      </div>
+    </div>
+    <div class="field">
+      <label>Descripción (opcional)</label>
+      <input type="text" id="edit-desc">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" onclick="deleteOperation()">Eliminar</button>
+      <button class="btn" onclick="closeEdit()">Cancelar</button>
+      <button class="btn btn-accent" onclick="saveEdit()">Guardar cambios</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── STATE ──────────────────────────────────────────────────────────────────
+let state = {
+  totalCapital: 0,
+  startDate: '',
+  threshold: 0,
+  age: null,
+  pctWealth: null,
+  operations: []   // {type, amount, risk, date, desc, pctInvested, pctRisk}
+};
+
+const CIRC = 2 * Math.PI * 45; // 282.74
+let chartInst = null;
+
+// ─── INIT ────────────────────────────────────────────────────────────────────
+window.onload = () => {
+  loadFromStorage();
+  setTodayDates();
+  if (!state.totalCapital) {
+    document.getElementById('setup-prompt').style.display = 'block';
+  }
+  render();
+};
+
+function setTodayDates() {
+  const today = new Date().toISOString().split('T')[0];
+  ['buy-date','sell-date'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && !el.value) el.value = today;
+  });
+}
+
+// ─── STORAGE ─────────────────────────────────────────────────────────────────
+function saveToStorage() {
+  try { localStorage.setItem('inv_tracker', JSON.stringify(state)); } catch(e) {}
+}
+function loadFromStorage() {
+  try {
+    const d = localStorage.getItem('inv_tracker');
+    if (d) state = JSON.parse(d);
+  } catch(e) {}
+}
+
+// ─── SETTINGS ────────────────────────────────────────────────────────────────
+function openSettings() {
+  document.getElementById('cfg-total').value = state.totalCapital || '';
+  document.getElementById('cfg-start').value = state.startDate || new Date().toISOString().split('T')[0];
+  document.getElementById('cfg-age').value = state.age || '';
+  document.getElementById('cfg-pct-wealth').value = state.pctWealth || '';
+  document.getElementById('cfg-threshold').value = state.threshold || '';
+  recalcThreshold();
+  document.getElementById('modal-settings').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('modal-settings').classList.remove('open');
+}
+function saveSettings() {
+  const total = parseFloat(document.getElementById('cfg-total').value);
+  const start = document.getElementById('cfg-start').value;
+  const threshold = parseFloat(document.getElementById('cfg-threshold').value);
+  if (!total || total <= 0) { alert('Introduce un capital válido.'); return; }
+  if (!start) { alert('Introduce una fecha de inicio.'); return; }
+  if (isNaN(threshold) || threshold < 0 || threshold > 100) { alert('El umbral debe estar entre 0 y 100.'); return; }
+  state.totalCapital = total;
+  state.startDate = start;
+  state.threshold = threshold;
+  state.age = parseFloat(document.getElementById('cfg-age').value) || null;
+  state.pctWealth = parseFloat(document.getElementById('cfg-pct-wealth').value) || null;
+  saveToStorage();
+  closeSettings();
+  document.getElementById('setup-prompt').style.display = 'none';
+  render();
+}
+
+function recalcThreshold() {
+  const age = parseFloat(document.getElementById('cfg-age').value);
+  const pct = parseFloat(document.getElementById('cfg-pct-wealth').value);
+  const el = document.getElementById('threshold-explain');
+  if (!age || !pct) { el.textContent = ''; return; }
+  // Formula: base age factor (100-age rule) * wealth concentration factor
+  // riesgo_edad = max(0, min(100, 100 - age))
+  // factor_patrimonio = pct <= 10 → 1.0, 10-30 → 0.75, 30-50 → 0.5, >50 → 0.25
+  const riskAge = Math.max(0, Math.min(100, 100 - age));
+  let wf;
+  if (pct <= 10) wf = 1.0;
+  else if (pct <= 30) wf = 0.75;
+  else if (pct <= 50) wf = 0.5;
+  else wf = 0.25;
+  const suggested = Math.round(riskAge * wf * 10) / 10;
+  document.getElementById('cfg-threshold').value = suggested;
+  el.innerHTML = `Regla 100-edad: ${riskAge.toFixed(0)}% · Factor concentración (${pct}% patrimonio): ×${wf} → <strong style="color:var(--accent)">${suggested}%</strong>`;
+}
+
+// ─── OPERATIONS ──────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  ['buy','sell'].forEach(t => {
+    document.getElementById('tab-'+t).classList.toggle('active', t===tab);
+    document.getElementById('form-'+t).classList.toggle('active', t===tab);
+  });
+}
+
+function addOperation(type) {
+  if (!state.totalCapital) { alert('Configura los datos iniciales primero.'); openSettings(); return; }
+  if (type === 'buy') {
+    const amount = parseFloat(document.getElementById('buy-amount').value);
+    const risk = parseFloat(document.getElementById('buy-risk').value);
+    const date = document.getElementById('buy-date').value;
+    const desc = document.getElementById('buy-desc').value.trim();
+    if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
+    if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
+    if (!date) { alert('Introduce una fecha.'); return; }
+    const currentInvested = calcInvested();
+    if (currentInvested + amount > state.totalCapital) {
+      if (!confirm(`Esta compra supera el capital disponible (quedan ${fmt(state.totalCapital - currentInvested)} €). ¿Continuar?`)) return;
+    }
+    const snap = getSnapshot(amount, type);
+    state.operations.push({ type:'buy', amount, risk, date, desc,
+      pctInvested: snap.pctInvested, pctRisk: snap.pctRisk });
+  } else {
+    const amount = parseFloat(document.getElementById('sell-amount').value);
+    const date = document.getElementById('sell-date').value;
+    const desc = document.getElementById('sell-desc').value.trim();
+    if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
+    if (!date) { alert('Introduce una fecha.'); return; }
+    const snap = getSnapshot(-amount, type);
+    state.operations.push({ type:'sell', amount, risk: null, date, desc,
+      pctInvested: snap.pctInvested, pctRisk: snap.pctRisk });
+  }
+  saveToStorage();
+  render();
+  // Clear inputs
+  ['buy-amount','buy-risk','buy-desc','sell-amount','sell-desc'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+}
+
+function calcInvested() {
+  return state.operations.reduce((s, op) => op.type==='buy' ? s+op.amount : s-op.amount, 0);
+}
+
+function calcWeightedRisk() {
+  // weighted average risk of current invested capital
+  let totalBought = 0, weightedRisk = 0;
+  for (const op of state.operations) {
+    if (op.type === 'buy') {
+      totalBought += op.amount;
+      weightedRisk += op.amount * op.risk;
+    }
+  }
+  const totalSold = state.operations.filter(o=>o.type==='sell').reduce((s,o)=>s+o.amount,0);
+  const netInvested = Math.max(0, totalBought - totalSold);
+  if (totalBought === 0) return 0;
+  const avgRisk = weightedRisk / totalBought;
+  return avgRisk; // weighted average risk of bought positions
+}
+
+function getSnapshot(delta, type) {
+  const invested = calcInvested() + (type==='buy' ? delta : delta);
+  const pctInvested = state.totalCapital ? Math.max(0, (invested / state.totalCapital)*100) : 0;
+  const pctRisk = calcWeightedRiskAfter(delta, type);
+  return { pctInvested: Math.round(pctInvested*10)/10, pctRisk: Math.round(pctRisk*10)/10 };
+}
+
+function calcWeightedRiskAfter(delta, type) {
+  // simulate after adding op
+  const ops = [...state.operations];
+  if (type==='buy') ops.push({type:'buy', amount:delta, risk: parseFloat(document.getElementById('buy-risk').value)||0});
+  let totalBought = 0, weightedRisk = 0;
+  for (const op of ops) {
+    if (op.type === 'buy') {
+      totalBought += op.amount;
+      weightedRisk += op.amount * op.risk;
+    }
+  }
+  if (totalBought === 0) return 0;
+  return weightedRisk / totalBought;
+}
+
+function clearHistory() {
+  if (!confirm('¿Eliminar todas las operaciones? Los datos de configuración se conservarán.')) return;
+  state.operations = [];
+  saveToStorage();
+  render();
+}
+
+// ─── EDIT OPERATIONS ─────────────────────────────────────────────────────────
+function openEdit(index) {
+  const op = state.operations[index];
+  if (!op) return;
+  
+  document.getElementById('edit-index').value = index;
+  document.getElementById('edit-type').value = op.type;
+  document.getElementById('edit-date').value = op.date;
+  document.getElementById('edit-amount').value = op.amount;
+  document.getElementById('edit-risk').value = op.risk || 0;
+  document.getElementById('edit-desc').value = op.desc || '';
+  
+  toggleEditRisk();
+  document.getElementById('edit-modal-title').textContent = op.type === 'buy' ? 'Editar compra' : 'Editar venta';
+  document.getElementById('modal-edit').classList.add('open');
+}
+
+function closeEdit() {
+  document.getElementById('modal-edit').classList.remove('open');
+}
+
+function toggleEditRisk() {
+  const type = document.getElementById('edit-type').value;
+  const riskField = document.getElementById('edit-risk-field');
+  riskField.style.display = type === 'buy' ? 'block' : 'none';
+}
+
+function saveEdit() {
+  const index = parseInt(document.getElementById('edit-index').value);
+  const type = document.getElementById('edit-type').value;
+  const date = document.getElementById('edit-date').value;
+  const amount = parseFloat(document.getElementById('edit-amount').value);
+  const desc = document.getElementById('edit-desc').value.trim();
+  
+  if (!date) { alert('Introduce una fecha.'); return; }
+  if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
+  
+  let risk = null;
+  if (type === 'buy') {
+    risk = parseFloat(document.getElementById('edit-risk').value);
+    if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
+  }
+  
+  // Recalculate percentages for all operations after this one
+  const opsBefore = state.operations.slice(0, index);
+  const opsAfter = state.operations.slice(index + 1);
+  
+  // Create temporary state with operations before this one
+  const tempState = { ...state, operations: [...opsBefore] };
+  
+  // Calculate snapshot for the edited operation
+  const invested = calcInvestedFromOps(opsBefore);
+  const weightedRisk = calcWeightedRiskFromOps(opsBefore);
+  
+  const newOp = {
+    type,
+    amount,
+    risk,
+    date,
+    desc,
+    pctInvested: 0,
+    pctRisk: 0
+  };
+  
+  // Add the edited operation
+  const opsWithEdit = [...opsBefore, newOp];
+  newOp.pctInvested = state.totalCapital ? Math.max(0, ((invested + (type === 'buy' ? amount : -amount)) / state.totalCapital) * 100) : 0;
+  newOp.pctRisk = calcWeightedRiskFromOps(opsWithEdit);
+  
+  // Recalculate percentages for operations after
+  const finalOps = [newOp];
+  for (const op of opsAfter) {
+    const currentInvested = calcInvestedFromOps(finalOps);
+    const currentRisk = calcWeightedRiskFromOps(finalOps);
+    const updatedOp = {
+      ...op,
+      pctInvested: state.totalCapital ? Math.max(0, ((currentInvested + (op.type === 'buy' ? op.amount : -op.amount)) / state.totalCapital) * 100) : 0,
+      pctRisk: calcWeightedRiskFromOps([...finalOps, op])
+    };
+    finalOps.push(updatedOp);
+  }
+  
+  state.operations = [...opsBefore, newOp, ...finalOps.slice(1)];
+  saveToStorage();
+  closeEdit();
+  render();
+}
+
+function deleteOperation(index) {
+  if (!confirm('¿Eliminar esta operación?')) return;
+  
+  const opsBefore = state.operations.slice(0, index);
+  const opsAfter = state.operations.slice(index + 1);
+  
+  // Recalculate percentages for all operations after the deleted one
+  const finalOps = [...opsBefore];
+  for (const op of opsAfter) {
+    const currentInvested = calcInvestedFromOps(finalOps);
+    const updatedOp = {
+      ...op,
+      pctInvested: state.totalCapital ? Math.max(0, ((currentInvested + (op.type === 'buy' ? op.amount : -op.amount)) / state.totalCapital) * 100) : 0,
+      pctRisk: calcWeightedRiskFromOps([...finalOps, op])
+    };
+    finalOps.push(updatedOp);
+  }
+  
+  state.operations = finalOps;
+  saveToStorage();
+  render();
+}
+
+function calcInvestedFromOps(ops) {
+  return ops.reduce((s, op) => op.type === 'buy' ? s + op.amount : s - op.amount, 0);
+}
+
+function calcWeightedRiskFromOps(ops) {
+  let totalBought = 0, weightedRisk = 0;
+  for (const op of ops) {
+    if (op.type === 'buy') {
+      totalBought += op.amount;
+      weightedRisk += op.amount * op.risk;
+    }
+  }
+  if (totalBought === 0) return 0;
+  return weightedRisk / totalBought;
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+function render() {
+  const invested = calcInvested();
+  const pctInv = state.totalCapital ? Math.max(0, (invested/state.totalCapital)*100) : 0;
+  const pctRisk = calcWeightedRisk();
+  const available = Math.max(0, state.totalCapital - invested);
+
+  // Gauges
+  setGauge('g-inv', 'pct-inv', pctInv, pctInv >= 90 ? 'var(--danger)' : pctInv >= 70 ? 'var(--warn)' : 'var(--accent)');
+  setGauge('g-risk', 'pct-risk', pctRisk, pctRisk > state.threshold && state.threshold > 0 ? 'var(--danger)' : pctRisk > state.threshold*0.8 && state.threshold > 0 ? 'var(--warn)' : 'var(--accent)');
+
+  document.getElementById('inv-abs').textContent = `${fmt(invested)} € / ${fmt(state.totalCapital)} €`;
+  document.getElementById('risk-threshold').textContent = state.threshold ? `Umbral: ${state.threshold}%` : 'Umbral: no definido';
+
+  // Warning
+  const wb = document.getElementById('warning-banner');
+  if (state.threshold > 0 && pctRisk > state.threshold) {
+    wb.style.display = 'block';
+    wb.className = '';
+    wb.textContent = `⚠ ALERTA: El riesgo acumulado (${pctRisk.toFixed(1)}%) supera tu umbral establecido (${state.threshold}%).`;
+  } else if (state.threshold > 0 && pctRisk > state.threshold * 0.8) {
+    wb.style.display = 'block';
+    wb.className = 'warn-yellow';
+    wb.textContent = `⚡ Atención: El riesgo acumulado (${pctRisk.toFixed(1)}%) se acerca al umbral (${state.threshold}%).`;
+  } else {
+    wb.style.display = 'none';
+  }
+
+  // Stats
+  document.getElementById('s-total').textContent = state.totalCapital ? fmt(state.totalCapital)+' €' : '—';
+  document.getElementById('s-invested').textContent = state.totalCapital ? fmt(invested)+' €' : '—';
+  document.getElementById('s-available').textContent = state.totalCapital ? fmt(available)+' €' : '—';
+  document.getElementById('s-threshold').textContent = state.threshold ? state.threshold+'%' : '—';
+  document.getElementById('s-start').textContent = state.startDate ? fmtDate(state.startDate) : '—';
+  document.getElementById('s-ops').textContent = state.operations.length;
+
+  // Color s-available
+  const el = document.getElementById('s-available');
+  el.className = 'stat-value' + (available < state.totalCapital*0.1 ? ' danger' : available < state.totalCapital*0.3 ? ' warn' : ' accent');
+
+  renderHistory();
+  renderChart();
+}
+
+function setGauge(fillId, pctId, pct, color) {
+  const clamped = Math.min(100, Math.max(0, pct));
+  const offset = CIRC - (clamped/100)*CIRC;
+  const el = document.getElementById(fillId);
+  el.style.strokeDashoffset = offset;
+  el.style.stroke = color;
+  document.getElementById(pctId).textContent = clamped.toFixed(1)+'%';
+  document.getElementById(pctId).style.color = color;
+}
+
+function renderHistory() {
+  const body = document.getElementById('history-body');
+  if (!state.operations.length) {
+    body.innerHTML = '<div class="no-data">Sin operaciones registradas.</div>';
+    return;
+  }
+  const rows = [...state.operations]
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .map((op, i) => {
+      const realIndex = state.operations.indexOf(op);
+      const tag = op.type==='buy'
+        ? '<span class="tag tag-buy">COMPRA</span>'
+        : '<span class="tag tag-sell">VENTA</span>';
+      const risk = op.type==='buy' ? op.risk.toFixed(1)+'%' : '—';
+      return `<tr>
+        <td>${fmtDate(op.date)}</td>
+        <td>${tag}</td>
+        <td>${fmt(op.amount)} €</td>
+        <td>${risk}</td>
+        <td>${op.pctInvested.toFixed(1)}%</td>
+        <td>${op.pctRisk.toFixed(1)}%</td>
+        <td style="color:var(--muted)">${op.desc||'—'}</td>
+        <td class="actions">
+          <button class="btn-icon" onclick="openEdit(${realIndex})" title="Editar">✎</button>
+          <button class="btn-icon del" onclick="deleteOperation(${realIndex})" title="Eliminar">✕</button>
+        </td>
+      </tr>`;
+    }).join('');
+  body.innerHTML = `<table>
+    <thead><tr>
+      <th>Fecha</th><th>Tipo</th><th>Importe</th><th>Riesgo op.</th><th>% Inv.</th><th>% Riesgo</th><th>Descripción</th><th>Acciones</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function renderChart() {
+  if (!state.operations.length) {
+    if (chartInst) { chartInst.destroy(); chartInst = null; }
+    return;
+  }
+  const sorted = [...state.operations].sort((a,b) => a.date.localeCompare(b.date));
+  const labels = sorted.map(o => fmtDate(o.date));
+  const invData = sorted.map(o => o.pctInvested);
+  const riskData = sorted.map(o => o.pctRisk);
+  const thresholdLine = sorted.map(() => state.threshold || null);
+
+  const ctx = document.getElementById('chart').getContext('2d');
+  if (chartInst) chartInst.destroy();
+  chartInst = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '% Invertido',
+          data: invData,
+          borderColor: '#c8f542',
+          backgroundColor: 'rgba(200,245,66,.08)',
+          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#c8f542',
+          tension: 0.3,
+          fill: true
+        },
+        {
+          label: '% Riesgo',
+          data: riskData,
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245,158,11,.06)',
+          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#f59e0b',
+          tension: 0.3,
+          fill: true
+        },
+        {
+          label: 'Umbral riesgo',
+          data: thresholdLine,
+          borderColor: '#ff4444',
+          borderWidth: 1,
+          borderDash: [4,4],
+          pointRadius: 0,
+          tension: 0
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          labels: { color: '#666', font: { size: 10, family: 'system-ui' }, boxWidth: 12 }
+        },
+        tooltip: {
+          backgroundColor: '#191919',
+          borderColor: '#2a2a2a',
+          borderWidth: 1,
+          titleColor: '#e0e0e0',
+          bodyColor: '#e0e0e0',
+          titleFont: { size: 10 },
+          bodyFont: { size: 10, family: 'Courier New' }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#444', font: { size: 9 } },
+          grid: { color: '#1e1e1e' }
+        },
+        y: {
+          min: 0, max: 100,
+          ticks: { color: '#444', font: { size: 9 }, callback: v => v+'%' },
+          grid: { color: '#1e1e1e' }
+        }
+      }
+    }
+  });
+}
+
+// ─── EXPORT / IMPORT ─────────────────────────────────────────────────────────
+function exportData() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `inversiones_${new Date().toISOString().split('T')[0]}.json`;
+  a.click();
+}
+function importData(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.totalCapital && !data.operations) throw new Error('Formato incorrecto');
+      state = data;
+      saveToStorage();
+      render();
+      alert('Datos importados correctamente.');
+    } catch(err) {
+      alert('Error al importar: ' + err.message);
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+function fmt(n) {
+  return new Intl.NumberFormat('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2}).format(n||0);
+}
+function fmtDate(d) {
+  if (!d) return '—';
+  const [y,m,day] = d.split('-');
+  return `${day}/${m}/${y}`;
+}
+</script>
+</body>
+</html>
