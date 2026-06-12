@@ -201,6 +201,21 @@
 
   input[type=file] { display: none; }
 
+  input[type=range] {
+    width: 100%; height: 4px; appearance: none; background: var(--border);
+    border: none; outline: none; border-radius: 2px; cursor: pointer;
+    margin: 6px 0;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: none;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: none;
+  }
+  .range-value { color: var(--accent); font-family: var(--font-mono); }
+
   .btn-icon {
     background: none; border: none; cursor: pointer;
     font-size: 11px; padding: 2px 5px; color: var(--muted);
@@ -317,12 +332,13 @@
         <input type="number" id="buy-amount" min="0" step="0.01" placeholder="0.00">
       </div>
       <div class="field">
-        <label>Riesgo (%)</label>
-        <input type="number" id="buy-risk" min="0" max="100" step="0.1" placeholder="0–100">
+        <label>Riesgo (%) <span class="range-value" id="buy-risk-val">50</span></label>
+        <input type="range" id="buy-risk" min="0" max="100" step="0.1" value="50"
+          oninput="document.getElementById('buy-risk-val').textContent=parseFloat(this.value).toFixed(1)">
       </div>
       <div class="field">
         <label for="buy-date">Fecha</label>
-        <input type="date" id="buy-date">
+        <input type="text" id="buy-date" placeholder="yyyy-mm-dd" pattern="\d{4}-\d{2}-\d{2}">
       </div>
     </div>
     <div class="field">
@@ -340,12 +356,13 @@
         <input type="number" id="sell-amount" min="0" step="0.01" placeholder="0.00">
       </div>
       <div class="field">
-        <label>Riesgo vendido (%)</label>
-        <input type="number" id="sell-risk" min="0" max="100" step="0.1" placeholder="0–100">
+        <label>Riesgo vendido (%) <span class="range-value" id="sell-risk-val">50</span></label>
+        <input type="range" id="sell-risk" min="0" max="100" step="0.1" value="50"
+          oninput="document.getElementById('sell-risk-val').textContent=parseFloat(this.value).toFixed(1)">
       </div>
       <div class="field">
         <label for="sell-date">Fecha</label>
-        <input type="date" id="sell-date">
+        <input type="text" id="sell-date" placeholder="yyyy-mm-dd" pattern="\d{4}-\d{2}-\d{2}">
       </div>
     </div>
     <div class="field">
@@ -388,7 +405,7 @@
     </div>
     <div class="field">
       <label for="cfg-start">Fecha de inicio de la inversión</label>
-      <input type="date" id="cfg-start">
+      <input type="text" id="cfg-start" placeholder="yyyy-mm-dd" pattern="\d{4}-\d{2}-\d{2}">
     </div>
     <div style="border-top:1px solid var(--border);margin:14px 0;padding-top:14px">
       <div class="panel-title" style="margin-bottom:10px">Parámetros del plan</div>
@@ -432,7 +449,7 @@
       </div>
       <div class="field">
         <label for="edit-date">Fecha</label>
-        <input type="date" id="edit-date">
+        <input type="text" id="edit-date" placeholder="yyyy-mm-dd" pattern="\d{4}-\d{2}-\d{2}">
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -441,8 +458,9 @@
         <input type="number" id="edit-amount" min="0" step="0.01">
       </div>
       <div class="field" id="edit-risk-field">
-        <label>Riesgo (%)</label>
-        <input type="number" id="edit-risk" min="0" max="100" step="0.1">
+        <label>Riesgo (%) <span class="range-value" id="edit-risk-val">0</span></label>
+        <input type="range" id="edit-risk" min="0" max="100" step="0.1" value="0"
+          oninput="document.getElementById('edit-risk-val').textContent=parseFloat(this.value).toFixed(1)">
       </div>
     </div>
     <div class="field">
@@ -517,11 +535,16 @@ function setTodayDates() {
 }
 
 function initDatePickers() {
-  document.querySelectorAll('.field input[type="date"]').forEach(el => {
-    const field = el.closest('.field');
-    if (!field) return;
-    field.addEventListener('click', () => {
-      try { el.showPicker(); } catch (_) {}
+  document.querySelectorAll('input[placeholder="yyyy-mm-dd"]').forEach(el => {
+    el.addEventListener('focus', function() {
+      this.type = 'date';
+      try { this.showPicker(); } catch (_) {}
+    });
+    el.addEventListener('change', function() {
+      this.type = 'text';
+    });
+    el.addEventListener('blur', function() {
+      if (!this.value) this.type = 'text';
     });
   });
 }
@@ -589,7 +612,7 @@ function saveSettings() {
   const start = document.getElementById('cfg-start').value;
   const threshold = parseFloat(document.getElementById('cfg-threshold').value);
   if (!total || total <= 0) { alert('Introduce un capital válido.'); return; }
-  if (!start) { alert('Introduce una fecha de inicio.'); return; }
+  if (!start || !/^\d{4}-\d{2}-\d{2}$/.test(start)) { alert('Introduce una fecha de inicio válida (yyyy-mm-dd).'); return; }
   if (isNaN(threshold) || threshold < 0 || threshold > 100) { alert('El umbral debe estar entre 0 y 100.'); return; }
 
   const horizonRaw = document.getElementById('cfg-horizon').value;
@@ -642,7 +665,7 @@ function addOperation(type) {
     const desc = document.getElementById('buy-desc').value.trim();
     if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
     if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
-    if (!date) { alert('Introduce una fecha.'); return; }
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert('Introduce una fecha válida (yyyy-mm-dd).'); return; }
     const currentInvested = calcInvested();
     if (currentInvested + amount > state.totalCapital) {
       if (!confirm(`Esta compra supera el capital disponible (quedan ${fmt(state.totalCapital - currentInvested)} €). ¿Continuar?`)) return;
@@ -655,14 +678,19 @@ function addOperation(type) {
     const desc = document.getElementById('sell-desc').value.trim();
     if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
     if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
-    if (!date) { alert('Introduce una fecha.'); return; }
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert('Introduce una fecha válida (yyyy-mm-dd).'); return; }
     state.operations.push({ type:'sell', amount, risk, date, desc });
   }
   saveToStorage();
   render();
   // Clear inputs
-  ['buy-amount','buy-risk','buy-desc','sell-amount','sell-risk','sell-desc'].forEach(id => {
-    document.getElementById(id).value = '';
+  document.getElementById('buy-amount').value = '';
+  document.getElementById('sell-amount').value = '';
+  document.getElementById('buy-desc').value = '';
+  document.getElementById('sell-desc').value = '';
+  ['buy-risk','sell-risk'].forEach(id => {
+    document.getElementById(id).value = 50;
+    document.getElementById(id+'-val').textContent = '50.0';
   });
 }
 
@@ -721,7 +749,9 @@ function openEdit(index) {
   document.getElementById('edit-type').value = op.type;
   document.getElementById('edit-date').value = op.date;
   document.getElementById('edit-amount').value = op.amount;
-  document.getElementById('edit-risk').value = op.risk || 0;
+  const riskVal = op.risk || 0;
+  document.getElementById('edit-risk').value = riskVal;
+  document.getElementById('edit-risk-val').textContent = riskVal.toFixed(1);
   document.getElementById('edit-desc').value = op.desc || '';
 
   toggleEditRisk();
@@ -754,7 +784,7 @@ function saveEdit() {
   const amount = parseFloat(document.getElementById('edit-amount').value);
   const desc = document.getElementById('edit-desc').value.trim();
 
-  if (!date) { alert('Introduce una fecha.'); return; }
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert('Introduce una fecha válida (yyyy-mm-dd).'); return; }
   if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
 
   let risk = null;
