@@ -163,7 +163,7 @@
     background: var(--surface); border: 1px solid var(--border);
     padding: 14px; margin-bottom: 16px;
   }
-  .chart-panel canvas { max-height: 180px; }
+  .chart-panel canvas { max-height: 220px; }
 
   /* History table */
   .history-panel { background: var(--surface); border: 1px solid var(--border); padding: 14px; }
@@ -334,10 +334,14 @@
 
   <!-- Sell form -->
   <div class="op-form" id="form-sell">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
       <div class="field">
         <label>Importe (€)</label>
         <input type="number" id="sell-amount" min="0" step="0.01" placeholder="0.00">
+      </div>
+      <div class="field">
+        <label>Riesgo vendido (%)</label>
+        <input type="number" id="sell-risk" min="0" max="100" step="0.1" placeholder="0–100">
       </div>
       <div class="field">
         <label for="sell-date">Fecha</label>
@@ -351,10 +355,16 @@
     <button class="btn btn-accent" onclick="addOperation('sell')">Registrar venta</button>
   </div>
 
-  <!-- Chart -->
+  <!-- Chart: Operations -->
   <div class="chart-panel">
-    <div class="panel-title">Evolución histórica</div>
-    <canvas id="chart"></canvas>
+    <div class="panel-title">Operaciones</div>
+    <canvas id="chart-ops"></canvas>
+  </div>
+
+  <!-- Chart: Accumulated results -->
+  <div class="chart-panel">
+    <div class="panel-title">Resultados acumulados</div>
+    <canvas id="chart-acc"></canvas>
   </div>
 
   <!-- History -->
@@ -460,7 +470,10 @@
  *   operations    {Operation[]} - Ordered list of buy/sell operations.
  *
  * Operation shape:
- *   { type: 'buy'|'sell', amount: number, risk: number|null, date: string, desc: string }
+ *   { type: 'buy'|'sell', amount: number, risk: number, date: string, desc: string }
+ *   `risk` represents the risk % of the operation — for buys it's the risk
+ *   assumed, for sells it's the risk of the position being sold (which is
+ *   subtracted from the weighted risk proportionally).
  *
  * Note: per-operation `pctInvested` and `pctRisk` are NOT stored. They are
  * derived on demand from the operations list and the current configuration.
@@ -476,7 +489,7 @@ let state = {
 
 // Circumference of the gauge circles (radius = 45).
 const CIRC = 2 * Math.PI * 45; // ≈ 282.74
-let chartInst = null;
+let chartAccInst = null, chartOpsInst = null;
 
 /**
  * Entry point: restore persisted state, default the date inputs to today,
@@ -534,6 +547,7 @@ function loadFromStorage() {
       if (Array.isArray(state.operations)) {
         state.operations = state.operations.map(op => {
           const { pctInvested, pctRisk, ...rest } = op;
+          if (rest.type === 'sell' && rest.risk === undefined) rest.risk = 0;
           return rest;
         });
       }
@@ -636,16 +650,18 @@ function addOperation(type) {
     state.operations.push({ type:'buy', amount, risk, date, desc });
   } else {
     const amount = parseFloat(document.getElementById('sell-amount').value);
+    const risk = parseFloat(document.getElementById('sell-risk').value);
     const date = document.getElementById('sell-date').value;
     const desc = document.getElementById('sell-desc').value.trim();
     if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
+    if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
     if (!date) { alert('Introduce una fecha.'); return; }
-    state.operations.push({ type:'sell', amount, risk: null, date, desc });
+    state.operations.push({ type:'sell', amount, risk, date, desc });
   }
   saveToStorage();
   render();
   // Clear inputs
-  ['buy-amount','buy-risk','buy-desc','sell-amount','sell-desc'].forEach(id => {
+  ['buy-amount','buy-risk','buy-desc','sell-amount','sell-risk','sell-desc'].forEach(id => {
     document.getElementById(id).value = '';
   });
 }
@@ -664,15 +680,19 @@ function calcInvested() {
  * Returns 0 when no buys have been recorded.
  */
 function calcWeightedRisk() {
-  let totalBought = 0, weightedRisk = 0;
+  let invested = 0, weightedRisk = 0;
   for (const op of state.operations) {
+    const r = op.risk || 0;
     if (op.type === 'buy') {
-      totalBought += op.amount;
-      weightedRisk += op.amount * op.risk;
+      invested += op.amount;
+      weightedRisk += op.amount * r;
+    } else {
+      invested -= op.amount;
+      weightedRisk -= op.amount * r;
     }
   }
-  if (totalBought === 0) return 0;
-  return weightedRisk / totalBought;
+  if (invested <= 0) return 0;
+  return Math.max(0, weightedRisk / invested);
 }
 
 /**
@@ -719,9 +739,7 @@ function closeEdit() {
  * operation type. Sells do not carry a per-operation risk value.
  */
 function toggleEditRisk() {
-  const type = document.getElementById('edit-type').value;
-  const riskField = document.getElementById('edit-risk-field');
-  riskField.style.display = type === 'buy' ? 'block' : 'none';
+  document.getElementById('edit-risk-field').style.display = 'block';
 }
 
 /**
@@ -740,7 +758,7 @@ function saveEdit() {
   if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
 
   let risk = null;
-  if (type === 'buy') {
+  if (type === 'buy' || type === 'sell') {
     risk = parseFloat(document.getElementById('edit-risk').value);
     if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
   }
@@ -770,23 +788,25 @@ function deleteOperation(index) {
  * percentages shown in the history table and the chart.
  *
  * @param {number} index - Inclusive index in `state.operations`.
- * @returns {{ pctInvested: number, pctRisk: number }}
+ * @returns {{ invested: number, pctInvested: number, pctRisk: number }}
  */
 function getSnapshotAt(index) {
   const slice = state.operations.slice(0, index + 1);
-  let invested = 0;
-  let totalBought = 0;
-  let weightedRisk = 0;
+  let invested = 0, weightedRisk = 0;
   for (const op of slice) {
-    invested += op.type === 'buy' ? op.amount : -op.amount;
+    const r = op.risk || 0;
     if (op.type === 'buy') {
-      totalBought += op.amount;
-      weightedRisk += op.amount * op.risk;
+      invested += op.amount;
+      weightedRisk += op.amount * r;
+    } else {
+      invested -= op.amount;
+      weightedRisk -= op.amount * r;
     }
   }
   const pctInvested = state.totalCapital ? Math.max(0, (invested / state.totalCapital) * 100) : 0;
-  const pctRisk = totalBought === 0 ? 0 : weightedRisk / totalBought;
+  const pctRisk = invested <= 0 ? 0 : Math.max(0, weightedRisk / invested);
   return {
+    invested: Math.round(invested * 100) / 100,
     pctInvested: Math.round(pctInvested * 10) / 10,
     pctRisk: Math.round(pctRisk * 10) / 10
   };
@@ -831,13 +851,6 @@ function render() {
     }
   }
 
-  if (state.horizon !== null && state.horizon > 0 && state.horizon < 5) {
-    const maxSafeRisk = Math.min(100, state.horizon * 15);
-    if (pctRisk > maxSafeRisk) {
-      warnings.push({ severity: 'warn', text: `⚡ Atención: Horizonte corto (${state.horizon} años) con riesgo elevado (${pctRisk.toFixed(1)}%). Considera reducir riesgo.` });
-    }
-  }
-
   const wb = document.getElementById('warning-banner');
   if (warnings.length > 0) {
     const hasDanger = warnings.some(w => w.severity === 'danger');
@@ -863,7 +876,8 @@ function render() {
   el.className = 'stat-value' + (available < state.totalCapital*0.1 ? ' danger' : available < state.totalCapital*0.3 ? ' warn' : ' accent');
 
   renderHistory();
-  renderChart();
+  renderOpsChart();
+  renderAccChart();
 }
 
 /**
@@ -896,15 +910,41 @@ function renderHistory() {
     body.innerHTML = '<div class="no-data">Sin operaciones registradas.</div>';
     return;
   }
+
+  // Compute cumulative snapshots in chronological order, keyed by original index
+  const chronological = state.operations
+    .map((op, i) => ({ op, i }))
+    .sort((a, b) => a.op.date.localeCompare(b.op.date));
+
+  const snapshots = {};
+  let runInvested = 0, runWeightedRisk = 0;
+  for (const { op, i } of chronological) {
+    const r = op.risk || 0;
+    if (op.type === 'buy') {
+      runInvested += op.amount;
+      runWeightedRisk += op.amount * r;
+    } else {
+      runInvested -= op.amount;
+      runWeightedRisk -= op.amount * r;
+    }
+    const pctInv = state.totalCapital ? Math.max(0, (runInvested / state.totalCapital) * 100) : 0;
+    const pctRisk = runInvested <= 0 ? 0 : Math.max(0, runWeightedRisk / runInvested);
+    snapshots[i] = {
+      pctInvested: Math.round(pctInv * 10) / 10,
+      pctRisk: Math.round(pctRisk * 10) / 10
+    };
+  }
+
+  // Render rows sorted by date descending
   const rows = state.operations
     .map((op, i) => ({ op, i }))
     .sort((a, b) => b.op.date.localeCompare(a.op.date))
     .map(({ op, i }) => {
-      const { pctInvested, pctRisk } = getSnapshotAt(i);
+      const { pctInvested, pctRisk } = snapshots[i];
       const tag = op.type==='buy'
         ? '<span class="tag tag-buy">COMPRA</span>'
         : '<span class="tag tag-sell">VENTA</span>';
-      const risk = op.type==='buy' ? op.risk.toFixed(1)+'%' : '—';
+      const risk = op.risk !== null && op.risk !== undefined ? op.risk.toFixed(1)+'%' : '—';
       return `<tr>
         <td>${fmtDate(op.date)}</td>
         <td>${tag}</td>
@@ -928,69 +968,50 @@ function renderHistory() {
 }
 
 /**
- * Render the line chart of cumulative invested % and weighted risk % over
- * time. A dashed horizontal line marks the configured risk threshold, when
- * defined. Chart instance is destroyed and recreated on every render to
- * avoid leaking Chart.js listeners.
+ * Render a mixed bar/line chart of individual operations. Bars show the
+ * capital amount of each operation (green for buys, red for sells), and
+ * the line shows the risk percentage of each operation. Chart instance
+ * is destroyed and recreated on every render to avoid leaking listeners.
  */
-function renderChart() {
+function renderOpsChart() {
   if (!state.operations.length) {
-    if (chartInst) { chartInst.destroy(); chartInst = null; }
+    if (chartOpsInst) { chartOpsInst.destroy(); chartOpsInst = null; }
     return;
   }
-  const indexed = state.operations.map((op, i) => ({ op, i }));
-  const sorted = [...indexed].sort((a, b) => a.op.date.localeCompare(b.op.date));
-  const labels = sorted.map(({ op }) => fmtDate(op.date));
-  const invData = sorted.map(({ i }) => getSnapshotAt(i).pctInvested);
-  const riskData = sorted.map(({ i }) => getSnapshotAt(i).pctRisk);
-  const thresholdLine = sorted.map(() => state.threshold || null);
+  const sorted = [...state.operations].sort((a, b) => a.date.localeCompare(b.date));
+  const labels = sorted.map(op => fmtDate(op.date));
+  const amounts = sorted.map(op => op.type === 'buy' ? op.amount : -op.amount);
+  const colors = sorted.map(op => op.type === 'buy' ? 'rgba(34,197,94,.7)' : 'rgba(239,68,68,.7)');
+  const borderColors = sorted.map(op => op.type === 'buy' ? '#22c55e' : '#ef4444');
+  const riskData = sorted.map(op => op.risk !== null && op.risk !== undefined ? op.risk : null);
 
-  const ctx = document.getElementById('chart').getContext('2d');
-  if (chartInst) chartInst.destroy();
-  chartInst = new Chart(ctx, {
-    type: 'line',
+  const ctx = document.getElementById('chart-ops').getContext('2d');
+  if (chartOpsInst) chartOpsInst.destroy();
+  chartOpsInst = new Chart(ctx, {
+    type: 'bar',
     data: {
       labels,
       datasets: [
         {
-          label: '% Invertido',
-          data: invData,
-          borderColor: '#c8f542',
-          backgroundColor: 'rgba(200,245,66,.08)',
-          borderWidth: 1.5,
-          pointRadius: 3,
-          pointBackgroundColor: '#c8f542',
-          tension: 0.3,
-          fill: true
+          label: 'Capital (€)',
+          data: amounts,
+          backgroundColor: colors,
+          borderColor: borderColors,
+          borderWidth: 1,
+          borderRadius: 2,
+          yAxisID: 'y'
         },
         {
-          label: '% Riesgo',
+          label: 'Riesgo (%)',
           data: riskData,
+          type: 'line',
           borderColor: '#f59e0b',
-          backgroundColor: 'rgba(245,158,11,.06)',
-          borderWidth: 1.5,
-          pointRadius: 3,
+          backgroundColor: '#f59e0b',
+          pointRadius: 4,
           pointBackgroundColor: '#f59e0b',
+          borderWidth: 2,
           tension: 0.3,
-          fill: true
-        },
-        {
-          label: 'Umbral riesgo',
-          data: thresholdLine,
-          borderColor: '#ff4444',
-          borderWidth: 1,
-          borderDash: [4,4],
-          pointRadius: 0,
-          tension: 0
-        },
-        {
-          label: 'Objetivo invertido',
-          data: state.investTarget !== null ? sorted.map(() => state.investTarget) : [],
-          borderColor: '#22c55e',
-          borderWidth: 1,
-          borderDash: [4,4],
-          pointRadius: 0,
-          tension: 0
+          yAxisID: 'y1'
         }
       ]
     },
@@ -1016,9 +1037,155 @@ function renderChart() {
           grid: { color: '#1e1e1e' }
         },
         y: {
-          min: 0, max: 100,
-          ticks: { color: '#444', font: { size: 9 }, callback: v => v+'%' },
+          position: 'left',
+          beginAtZero: true,
+          ticks: { color: '#22c55e', font: { size: 9 }, callback: v => v+' €' },
           grid: { color: '#1e1e1e' }
+        },
+        y1: {
+          position: 'right',
+          min: 0, max: 100,
+          ticks: { color: '#f59e0b', font: { size: 9 }, callback: v => v+'%' },
+          grid: { drawOnChartArea: false }
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Render the line chart of cumulative invested capital (€) and weighted
+ * risk (%) over time. Left axis shows euro amounts, right axis shows
+ * percentages. Dashed horizontal lines mark the configured thresholds.
+ * Chart instance is destroyed and recreated on every render to avoid
+ * leaking Chart.js listeners.
+ */
+function renderAccChart() {
+  if (!state.operations.length) {
+    if (chartAccInst) { chartAccInst.destroy(); chartAccInst = null; }
+    return;
+  }
+  // Compute cumulative values in chronological order
+  const sortedOps = [...state.operations].sort((a, b) => a.date.localeCompare(b.date));
+  const labels = sortedOps.map(op => fmtDate(op.date));
+
+  let runInvested = 0, runWeightedRisk = 0;
+  const capitalData = [], invData = [], riskData = [];
+
+  for (const op of sortedOps) {
+    const r = op.risk || 0;
+    if (op.type === 'buy') {
+      runInvested += op.amount;
+      runWeightedRisk += op.amount * r;
+    } else {
+      runInvested -= op.amount;
+      runWeightedRisk -= op.amount * r;
+    }
+    const pctInv = state.totalCapital ? Math.max(0, (runInvested / state.totalCapital) * 100) : 0;
+    const pctRisk = runInvested <= 0 ? 0 : Math.max(0, runWeightedRisk / runInvested);
+    capitalData.push(Math.round(runInvested * 100) / 100);
+    invData.push(Math.round(pctInv * 10) / 10);
+    riskData.push(Math.round(pctRisk * 10) / 10);
+  }
+
+  const thresholdLine = sortedOps.map(() => state.threshold || null);
+  const targetEurData = state.investTarget !== null ? sortedOps.map(() => Math.round((state.investTarget / 100) * state.totalCapital * 100) / 100) : [];
+
+  const ctx = document.getElementById('chart-acc').getContext('2d');
+  if (chartAccInst) chartAccInst.destroy();
+  chartAccInst = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Capital invertido (€)',
+          data: capitalData,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,.08)',
+          borderWidth: 1.5,
+          pointRadius: 2,
+          tension: 0.3,
+          fill: true,
+          yAxisID: 'y'
+        },
+        {
+          label: '% Invertido',
+          data: invData,
+          borderColor: '#c8f542',
+          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#c8f542',
+          tension: 0.3,
+          yAxisID: 'y1',
+          borderDash: [3,3]
+        },
+        {
+          label: '% Riesgo',
+          data: riskData,
+          borderColor: '#f59e0b',
+          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#f59e0b',
+          tension: 0.3,
+          yAxisID: 'y1',
+          fill: true,
+          backgroundColor: 'rgba(245,158,11,.06)'
+        },
+        {
+          label: 'Umbral riesgo',
+          data: thresholdLine,
+          borderColor: '#ff4444',
+          borderWidth: 1,
+          borderDash: [4,4],
+          pointRadius: 0,
+          tension: 0,
+          yAxisID: 'y1'
+        },
+        {
+          label: 'Objetivo invertido',
+          data: targetEurData,
+          borderColor: '#22c55e',
+          borderWidth: 1,
+          borderDash: [4,4],
+          pointRadius: 0,
+          tension: 0,
+          yAxisID: 'y'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          labels: { color: '#666', font: { size: 10, family: 'system-ui' }, boxWidth: 12 }
+        },
+        tooltip: {
+          backgroundColor: '#191919',
+          borderColor: '#2a2a2a',
+          borderWidth: 1,
+          titleColor: '#e0e0e0',
+          bodyColor: '#e0e0e0',
+          titleFont: { size: 10 },
+          bodyFont: { size: 10, family: 'Courier New' }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#444', font: { size: 9 } },
+          grid: { color: '#1e1e1e' }
+        },
+        y: {
+          position: 'left',
+          beginAtZero: true,
+          ticks: { color: '#3b82f6', font: { size: 9 }, callback: v => v+' €' },
+          grid: { color: '#1e1e1e' }
+        },
+        y1: {
+          position: 'right',
+          min: 0, max: 100,
+          ticks: { color: '#f59e0b', font: { size: 9 }, callback: v => v+'%' },
+          grid: { drawOnChartArea: false }
         }
       }
     }
@@ -1053,6 +1220,15 @@ function importData(e) {
       const data = JSON.parse(ev.target.result);
       if (!data.totalCapital && !data.operations) throw new Error('Formato incorrecto');
       state = data;
+      if (Array.isArray(state.operations)) {
+        state.operations = state.operations.map(op => {
+          const { pctInvested, pctRisk, ...rest } = op;
+          if (rest.type === 'sell' && rest.risk === undefined) rest.risk = 0;
+          return rest;
+        });
+      }
+      delete state.age;
+      delete state.pctWealth;
       saveToStorage();
       render();
       alert('Datos importados correctamente.');
@@ -1070,8 +1246,7 @@ function fmt(n) {
 }
 function fmtDate(d) {
   if (!d) return '—';
-  const [y,m,day] = d.split('-');
-  return `${day}/${m}/${y}`;
+  return d;
 }
 </script>
 </body>
