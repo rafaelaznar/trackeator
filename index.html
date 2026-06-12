@@ -58,7 +58,7 @@
   /* Gauges */
   .gauges {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 1px;
     background: var(--border);
     border: 1px solid var(--border);
@@ -277,6 +277,21 @@
       </div>
       <div class="gauge-sub" id="risk-threshold">Umbral: — %</div>
     </div>
+    <div class="gauge-cell">
+      <div class="gauge-title">Apalancamiento</div>
+      <div class="gauge-wrap">
+        <svg class="gauge-svg" width="110" height="110" viewBox="0 0 110 110">
+          <circle class="gauge-track" cx="55" cy="55" r="45"/>
+          <circle class="gauge-fill" id="g-lev" cx="55" cy="55" r="45"
+            stroke="#c8f542" stroke-dasharray="282.74" stroke-dashoffset="282.74"/>
+        </svg>
+        <div class="gauge-center">
+          <span class="gauge-pct" id="pct-lev">0%</span>
+          <span class="gauge-lbl">apal.</span>
+        </div>
+      </div>
+      <div class="gauge-sub" id="lev-threshold">Umbral: — %</div>
+    </div>
   </div>
 
   <!-- Warning -->
@@ -316,60 +331,19 @@
       <div class="stat-label">Operaciones</div>
       <div class="stat-value" id="s-ops">0</div>
     </div>
+    <div class="stat">
+      <div class="stat-label">Apalancamiento</div>
+      <div class="stat-value" id="s-lev">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Umbral apal.</div>
+      <div class="stat-value" id="s-lev-threshold">—</div>
+    </div>
   </div>
 
-  <!-- Operation tabs -->
-  <div class="op-tabs">
-    <div class="op-tab active" id="tab-buy" onclick="switchTab('buy')">↑ Compra</div>
-    <div class="op-tab" id="tab-sell" onclick="switchTab('sell')">↓ Venta</div>
-  </div>
-
-  <!-- Buy form -->
-  <div class="op-form active" id="form-buy">
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-      <div class="field">
-        <label>Importe (€)</label>
-        <input type="number" id="buy-amount" min="0" step="0.01" placeholder="0.00">
-      </div>
-      <div class="field">
-        <label>Riesgo (%) <span class="range-value" id="buy-risk-val">50</span></label>
-        <input type="range" id="buy-risk" min="0" max="100" step="0.1" value="50"
-          oninput="document.getElementById('buy-risk-val').textContent=parseFloat(this.value).toFixed(1)">
-      </div>
-      <div class="field">
-        <label for="buy-date">Fecha</label>
-        <input type="text" id="buy-date" placeholder="yyyy-mm-dd" pattern="\d{4}-\d{2}-\d{2}">
-      </div>
-    </div>
-    <div class="field">
-      <label>Descripción (opcional)</label>
-      <input type="text" id="buy-desc" placeholder="p. ej. ETF S&P500">
-    </div>
-    <button class="btn btn-accent" onclick="addOperation('buy')">Registrar compra</button>
-  </div>
-
-  <!-- Sell form -->
-  <div class="op-form" id="form-sell">
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-      <div class="field">
-        <label>Importe (€)</label>
-        <input type="number" id="sell-amount" min="0" step="0.01" placeholder="0.00">
-      </div>
-      <div class="field">
-        <label>Riesgo vendido (%) <span class="range-value" id="sell-risk-val">50</span></label>
-        <input type="range" id="sell-risk" min="0" max="100" step="0.1" value="50"
-          oninput="document.getElementById('sell-risk-val').textContent=parseFloat(this.value).toFixed(1)">
-      </div>
-      <div class="field">
-        <label for="sell-date">Fecha</label>
-        <input type="text" id="sell-date" placeholder="yyyy-mm-dd" pattern="\d{4}-\d{2}-\d{2}">
-      </div>
-    </div>
-    <div class="field">
-      <label>Descripción (opcional)</label>
-      <input type="text" id="sell-desc" placeholder="p. ej. Cierre posición ETF">
-    </div>
-    <button class="btn btn-accent" onclick="addOperation('sell')">Registrar venta</button>
+  <!-- Add operation button -->
+  <div style="margin-bottom:16px">
+    <button class="btn btn-accent" onclick="openOpModal()" style="width:100%;padding:8px">+ Nueva operación</button>
   </div>
 
   <!-- Chart: Operations -->
@@ -394,6 +368,48 @@
   </div>
 
 </main>
+
+<!-- Operation Modal -->
+<div class="modal-overlay" id="modal-op">
+  <div class="modal">
+    <div class="modal-title">Nueva operación</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Tipo</label>
+        <select id="op-type" onchange="toggleOpRiskLabel()">
+          <option value="buy">Compra</option>
+          <option value="sell">Venta</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="op-date">Fecha</label>
+        <input type="text" id="op-date" placeholder="yyyy-mm-dd" pattern="\d{4}-\d{2}-\d{2}">
+      </div>
+    </div>
+    <div class="field">
+      <label>Importe (€)</label>
+      <input type="number" id="op-amount" min="0" step="0.01" placeholder="0.00">
+    </div>
+    <div class="field">
+      <label><span id="op-risk-label">Riesgo</span> (%) <span class="range-value" id="op-risk-val">50</span></label>
+      <input type="range" id="op-risk" min="0" max="100" step="0.1" value="50"
+        oninput="document.getElementById('op-risk-val').textContent=parseFloat(this.value).toFixed(1)">
+    </div>
+    <div class="field">
+      <label>Apalancamiento (%) <span class="range-value" id="op-lev-val">0</span></label>
+      <input type="range" id="op-lev" min="0" max="100" step="1" value="0"
+        oninput="document.getElementById('op-lev-val').textContent=parseFloat(this.value).toFixed(0)">
+    </div>
+    <div class="field">
+      <label>Descripción (opcional)</label>
+      <input type="text" id="op-desc" placeholder="p. ej. ETF S&P500">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeOpModal()">Cancelar</button>
+      <button class="btn btn-accent" onclick="addOperation()">Guardar</button>
+    </div>
+  </div>
+</div>
 
 <!-- Settings Modal -->
 <div class="modal-overlay" id="modal-settings">
@@ -425,6 +441,11 @@
         <label>Umbral de riesgo (%)</label>
         <input type="number" id="cfg-threshold" min="0" max="100" step="0.1" placeholder="0–100">
         <div class="risk-help" style="margin-top:4px;line-height:1.6">Riesgo máximo que estás dispuesto a asumir sobre el capital invertido.</div>
+      </div>
+      <div class="field" style="margin-top:6px">
+        <label>Umbral de apalancamiento (%)</label>
+        <input type="number" id="cfg-lev-threshold" min="0" max="100" step="1" placeholder="0">
+        <div class="risk-help" style="margin-top:4px;line-height:1.6">Apalancamiento máximo permitido (0 = sin apalancamiento).</div>
       </div>
     </div>
     <div class="modal-actions">
@@ -463,6 +484,14 @@
           oninput="document.getElementById('edit-risk-val').textContent=parseFloat(this.value).toFixed(1)">
       </div>
     </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="field">
+        <label>Apalancamiento (%) <span class="range-value" id="edit-lev-val">0</span></label>
+        <input type="range" id="edit-lev" min="0" max="100" step="1" value="0"
+          oninput="document.getElementById('edit-lev-val').textContent=parseFloat(this.value).toFixed(0)">
+      </div>
+      <div class="field"></div>
+    </div>
     <div class="field">
       <label>Descripción (opcional)</label>
       <input type="text" id="edit-desc">
@@ -500,6 +529,7 @@ let state = {
   totalCapital: 0,
   startDate: '',
   threshold: 0,
+  levThreshold: 0,
   horizon: null,
   investTarget: null,
   operations: []
@@ -528,7 +558,7 @@ window.onload = () => {
  */
 function setTodayDates() {
   const today = new Date().toISOString().split('T')[0];
-  ['buy-date','sell-date'].forEach(id => {
+  ['op-date'].forEach(id => {
     const el = document.getElementById(id);
     if (el && !el.value) el.value = today;
   });
@@ -571,6 +601,7 @@ function loadFromStorage() {
         state.operations = state.operations.map(op => {
           const { pctInvested, pctRisk, ...rest } = op;
           if (rest.type === 'sell' && rest.risk === undefined) rest.risk = 0;
+          if (rest.lev === undefined) rest.lev = 0;
           return rest;
         });
       }
@@ -578,6 +609,31 @@ function loadFromStorage() {
       delete state.pctWealth;
     }
   } catch(e) {}
+}
+
+/** Open the operation modal with today's date and default values. */
+function openOpModal() {
+  document.getElementById('op-type').value = 'buy';
+  document.getElementById('op-amount').value = '';
+  document.getElementById('op-risk').value = 50;
+  document.getElementById('op-risk-val').textContent = '50.0';
+  document.getElementById('op-lev').value = 0;
+  document.getElementById('op-lev-val').textContent = '0';
+  document.getElementById('op-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('op-desc').value = '';
+  document.getElementById('op-risk-label').textContent = 'Riesgo';
+  document.getElementById('modal-op').classList.add('open');
+}
+
+/** Close the operation modal without persisting. */
+function closeOpModal() {
+  document.getElementById('modal-op').classList.remove('open');
+}
+
+/** Toggle the risk label text based on the selected operation type. */
+function toggleOpRiskLabel() {
+  const type = document.getElementById('op-type').value;
+  document.getElementById('op-risk-label').textContent = type === 'buy' ? 'Riesgo' : 'Riesgo vendido';
 }
 
 /**
@@ -589,6 +645,7 @@ function openSettings() {
   document.getElementById('cfg-horizon').value = state.horizon || '';
   document.getElementById('cfg-invest-target').value = state.investTarget || '';
   document.getElementById('cfg-threshold').value = state.threshold || '';
+  document.getElementById('cfg-lev-threshold').value = state.levThreshold || '';
   document.getElementById('modal-settings').classList.add('open');
 }
 
@@ -625,9 +682,16 @@ function saveSettings() {
     alert('El umbral de capital objetivo debe estar entre 0 y 100.'); return;
   }
 
+  const levThresholdRaw = document.getElementById('cfg-lev-threshold').value;
+  const levThreshold = levThresholdRaw === '' ? 0 : parseFloat(levThresholdRaw);
+  if (isNaN(levThreshold) || levThreshold < 0 || levThreshold > 100) {
+    alert('El umbral de apalancamiento debe estar entre 0 y 100.'); return;
+  }
+
   state.totalCapital = total;
   state.startDate = start;
   state.threshold = threshold;
+  state.levThreshold = levThreshold;
   state.horizon = horizon;
   state.investTarget = investTarget;
   saveToStorage();
@@ -637,61 +701,32 @@ function saveSettings() {
 }
 
 /**
- * Show the requested tab/form (buy or sell) and toggle the active styling.
- *
- * @param {'buy'|'sell'} tab
+ * Add a new buy or sell operation from the modal. Validates input, asks for
+ * confirmation when the buy exceeds available capital, closes the modal on
+ * success and re-renders.
  */
-function switchTab(tab) {
-  ['buy','sell'].forEach(t => {
-    document.getElementById('tab-'+t).classList.toggle('active', t===tab);
-    document.getElementById('form-'+t).classList.toggle('active', t===tab);
-  });
-}
-
-/**
- * Add a new buy or sell operation. Validates input, asks for confirmation
- * when the buy exceeds available capital, and clears the form on success.
- * Per-operation percentage snapshots are not stored; they are recomputed
- * on every render.
- *
- * @param {'buy'|'sell'} type
- */
-function addOperation(type) {
+function addOperation() {
   if (!state.totalCapital) { alert('Configura los datos iniciales primero.'); openSettings(); return; }
+  const type = document.getElementById('op-type').value;
+  const amount = parseFloat(document.getElementById('op-amount').value);
+  const risk = parseFloat(document.getElementById('op-risk').value);
+  const lev = parseFloat(document.getElementById('op-lev').value);
+  const date = document.getElementById('op-date').value;
+  const desc = document.getElementById('op-desc').value.trim();
+  if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
+  if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
+  if (isNaN(lev) || lev < 0 || lev > 100) { alert('El apalancamiento debe estar entre 0 y 100.'); return; }
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert('Introduce una fecha válida (yyyy-mm-dd).'); return; }
   if (type === 'buy') {
-    const amount = parseFloat(document.getElementById('buy-amount').value);
-    const risk = parseFloat(document.getElementById('buy-risk').value);
-    const date = document.getElementById('buy-date').value;
-    const desc = document.getElementById('buy-desc').value.trim();
-    if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
-    if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert('Introduce una fecha válida (yyyy-mm-dd).'); return; }
     const currentInvested = calcInvested();
     if (currentInvested + amount > state.totalCapital) {
       if (!confirm(`Esta compra supera el capital disponible (quedan ${fmt(state.totalCapital - currentInvested)} €). ¿Continuar?`)) return;
     }
-    state.operations.push({ type:'buy', amount, risk, date, desc });
-  } else {
-    const amount = parseFloat(document.getElementById('sell-amount').value);
-    const risk = parseFloat(document.getElementById('sell-risk').value);
-    const date = document.getElementById('sell-date').value;
-    const desc = document.getElementById('sell-desc').value.trim();
-    if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
-    if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
-    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { alert('Introduce una fecha válida (yyyy-mm-dd).'); return; }
-    state.operations.push({ type:'sell', amount, risk, date, desc });
   }
+  state.operations.push({ type, amount, risk, lev, date, desc });
   saveToStorage();
   render();
-  // Clear inputs
-  document.getElementById('buy-amount').value = '';
-  document.getElementById('sell-amount').value = '';
-  document.getElementById('buy-desc').value = '';
-  document.getElementById('sell-desc').value = '';
-  ['buy-risk','sell-risk'].forEach(id => {
-    document.getElementById(id).value = 50;
-    document.getElementById(id+'-val').textContent = '50.0';
-  });
+  closeOpModal();
 }
 
 /**
@@ -724,6 +759,27 @@ function calcWeightedRisk() {
 }
 
 /**
+ * Weighted average leverage of current position.
+ * Weights are the operation amounts. Sells subtract their leverage contribution.
+ * Returns 100 when no position (no leverage).
+ */
+function calcLeverage() {
+  let invested = 0, weightedLev = 0;
+  for (const op of state.operations) {
+    const l = op.lev || 0;
+    if (op.type === 'buy') {
+      invested += op.amount;
+      weightedLev += op.amount * l;
+    } else {
+      invested -= op.amount;
+      weightedLev -= op.amount * l;
+    }
+  }
+  if (invested <= 0) return 0;
+  return Math.max(0, Math.min(100, weightedLev / invested));
+}
+
+/**
  * Remove every operation from the history, keeping the configuration intact.
  * Asks the user to confirm because the action cannot be undone (other than
  * via an exported JSON backup).
@@ -752,6 +808,9 @@ function openEdit(index) {
   const riskVal = op.risk || 0;
   document.getElementById('edit-risk').value = riskVal;
   document.getElementById('edit-risk-val').textContent = riskVal.toFixed(1);
+  const levVal = op.lev || 0;
+  document.getElementById('edit-lev').value = levVal;
+  document.getElementById('edit-lev-val').textContent = levVal.toFixed(0);
   document.getElementById('edit-desc').value = op.desc || '';
 
   toggleEditRisk();
@@ -792,8 +851,10 @@ function saveEdit() {
     risk = parseFloat(document.getElementById('edit-risk').value);
     if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
   }
+  const lev = parseFloat(document.getElementById('edit-lev').value);
+  if (isNaN(lev) || lev < 0 || lev > 100) { alert('El apalancamiento debe estar entre 0 y 100.'); return; }
 
-  state.operations[index] = { type, amount, risk, date, desc };
+  state.operations[index] = { type, amount, risk, lev, date, desc };
   saveToStorage();
   closeEdit();
   render();
@@ -850,16 +911,19 @@ function render() {
   const invested = calcInvested();
   const pctInv = state.totalCapital ? Math.max(0, (invested/state.totalCapital)*100) : 0;
   const pctRisk = calcWeightedRisk();
+  const lev = calcLeverage();
   const available = Math.max(0, state.totalCapital - invested);
 
   // Gauges
   setGauge('g-inv', 'pct-inv', pctInv, pctInv >= 90 ? 'var(--danger)' : pctInv >= 70 ? 'var(--warn)' : 'var(--accent)');
   setGauge('g-risk', 'pct-risk', pctRisk, pctRisk > state.threshold && state.threshold > 0 ? 'var(--danger)' : pctRisk > state.threshold*0.8 && state.threshold > 0 ? 'var(--warn)' : 'var(--accent)');
+  setGauge('g-lev', 'pct-lev', lev, lev > state.levThreshold && state.levThreshold > 0 ? 'var(--danger)' : lev > state.levThreshold * 0.8 && state.levThreshold > 0 ? 'var(--warn)' : 'var(--accent)');
 
   let invLabel = `${fmt(invested)} € / ${fmt(state.totalCapital)} €`;
   if (state.investTarget !== null) invLabel += ` · Objetivo: ${state.investTarget}%`;
   document.getElementById('inv-abs').textContent = invLabel;
   document.getElementById('risk-threshold').textContent = state.threshold ? `Umbral: ${state.threshold}%` : 'Umbral: no definido';
+  document.getElementById('lev-threshold').textContent = state.levThreshold ? `Umbral: ${state.levThreshold}%` : 'Umbral: no definido';
 
   // Warning banner: collect active warnings and display all of them.
   const warnings = [];
@@ -881,6 +945,12 @@ function render() {
     }
   }
 
+  if (state.levThreshold > 0 && lev > state.levThreshold) {
+    warnings.push({ severity: 'danger', text: `⚠ ALERTA: Apalancamiento (${lev.toFixed(1)}%) supera tu umbral (${state.levThreshold}%).` });
+  } else if (state.levThreshold > 0 && lev > state.levThreshold * 0.8) {
+    warnings.push({ severity: 'warn', text: `⚡ Atención: Apalancamiento (${lev.toFixed(1)}%) se acerca al umbral (${state.levThreshold}%).` });
+  }
+
   const wb = document.getElementById('warning-banner');
   if (warnings.length > 0) {
     const hasDanger = warnings.some(w => w.severity === 'danger');
@@ -900,6 +970,8 @@ function render() {
   document.getElementById('s-horizon').textContent = state.horizon ? state.horizon+' años' : '—';
   document.getElementById('s-target').textContent = state.investTarget !== null ? state.investTarget+'%' : '—';
   document.getElementById('s-ops').textContent = state.operations.length;
+  document.getElementById('s-lev').textContent = lev.toFixed(1)+'%';
+  document.getElementById('s-lev-threshold').textContent = state.levThreshold ? state.levThreshold+'%' : '—';
 
   // Color the "available" stat by how close we are to running out of capital.
   const el = document.getElementById('s-available');
@@ -947,21 +1019,26 @@ function renderHistory() {
     .sort((a, b) => a.op.date.localeCompare(b.op.date));
 
   const snapshots = {};
-  let runInvested = 0, runWeightedRisk = 0;
+  let runInvested = 0, runWeightedRisk = 0, runWeightedLev = 0;
   for (const { op, i } of chronological) {
     const r = op.risk || 0;
+    const l = op.lev || 0;
     if (op.type === 'buy') {
       runInvested += op.amount;
       runWeightedRisk += op.amount * r;
+      runWeightedLev += op.amount * l;
     } else {
       runInvested -= op.amount;
       runWeightedRisk -= op.amount * r;
+      runWeightedLev -= op.amount * l;
     }
     const pctInv = state.totalCapital ? Math.max(0, (runInvested / state.totalCapital) * 100) : 0;
     const pctRisk = runInvested <= 0 ? 0 : Math.max(0, runWeightedRisk / runInvested);
+    const pctLev = runInvested <= 0 ? 0 : Math.max(0, Math.min(100, runWeightedLev / runInvested));
     snapshots[i] = {
       pctInvested: Math.round(pctInv * 10) / 10,
-      pctRisk: Math.round(pctRisk * 10) / 10
+      pctRisk: Math.round(pctRisk * 10) / 10,
+      pctLev: Math.round(pctLev * 10) / 10
     };
   }
 
@@ -970,18 +1047,21 @@ function renderHistory() {
     .map((op, i) => ({ op, i }))
     .sort((a, b) => b.op.date.localeCompare(a.op.date))
     .map(({ op, i }) => {
-      const { pctInvested, pctRisk } = snapshots[i];
+      const { pctInvested, pctRisk, pctLev } = snapshots[i];
       const tag = op.type==='buy'
         ? '<span class="tag tag-buy">COMPRA</span>'
         : '<span class="tag tag-sell">VENTA</span>';
       const risk = op.risk !== null && op.risk !== undefined ? op.risk.toFixed(1)+'%' : '—';
+      const lev = op.lev !== null && op.lev !== undefined ? op.lev.toFixed(0)+'%' : '—';
       return `<tr>
         <td>${fmtDate(op.date)}</td>
         <td>${tag}</td>
         <td>${fmt(op.amount)} €</td>
         <td>${risk}</td>
+        <td>${lev}</td>
         <td>${pctInvested.toFixed(1)}%</td>
         <td>${pctRisk.toFixed(1)}%</td>
+        <td>${pctLev.toFixed(1)}%</td>
         <td style="color:var(--muted)">${op.desc||'—'}</td>
         <td class="actions">
           <button class="btn-icon" onclick="openEdit(${i})" title="Editar">✎</button>
@@ -991,7 +1071,7 @@ function renderHistory() {
     }).join('');
   body.innerHTML = `<table>
     <thead><tr>
-      <th>Fecha</th><th>Tipo</th><th>Importe</th><th>Riesgo op.</th><th>% Inv.</th><th>% Riesgo</th><th>Descripción</th><th>Acciones</th>
+      <th>Fecha</th><th>Tipo</th><th>Importe</th><th>Riesgo op.</th><th>Apal. op.</th><th>% Inv.</th><th>% Riesgo</th><th>% Apal.</th><th>Descripción</th><th>Acciones</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
@@ -1014,6 +1094,7 @@ function renderOpsChart() {
   const colors = sorted.map(op => op.type === 'buy' ? 'rgba(34,197,94,.7)' : 'rgba(239,68,68,.7)');
   const borderColors = sorted.map(op => op.type === 'buy' ? '#22c55e' : '#ef4444');
   const riskData = sorted.map(op => op.risk !== null && op.risk !== undefined ? op.risk : null);
+  const levData = sorted.map(op => op.lev !== null && op.lev !== undefined ? op.lev : null);
 
   const ctx = document.getElementById('chart-ops').getContext('2d');
   if (chartOpsInst) chartOpsInst.destroy();
@@ -1041,6 +1122,19 @@ function renderOpsChart() {
           pointBackgroundColor: '#f59e0b',
           borderWidth: 2,
           tension: 0.3,
+          yAxisID: 'y1'
+        },
+        {
+          label: 'Apalancamiento (%)',
+          data: levData,
+          type: 'line',
+          borderColor: '#3b82f6',
+          backgroundColor: '#3b82f6',
+          pointRadius: 3,
+          pointBackgroundColor: '#3b82f6',
+          borderWidth: 2,
+          tension: 0.3,
+          borderDash: [5, 5],
           yAxisID: 'y1'
         }
       ]
@@ -1074,7 +1168,7 @@ function renderOpsChart() {
         },
         y1: {
           position: 'right',
-          min: 0, max: 100,
+          min: 0, max: 500,
           ticks: { color: '#f59e0b', font: { size: 9 }, callback: v => v+'%' },
           grid: { drawOnChartArea: false }
         }
@@ -1099,26 +1193,33 @@ function renderAccChart() {
   const sortedOps = [...state.operations].sort((a, b) => a.date.localeCompare(b.date));
   const labels = sortedOps.map(op => fmtDate(op.date));
 
-  let runInvested = 0, runWeightedRisk = 0;
-  const capitalData = [], invData = [], riskData = [];
+  let runInvested = 0, runWeightedRisk = 0, runWeightedLev = 0;
+  const capitalData = [], invData = [], riskData = [], levData = [], levPointData = [];
 
   for (const op of sortedOps) {
     const r = op.risk || 0;
+    const l = op.lev || 0;
     if (op.type === 'buy') {
       runInvested += op.amount;
       runWeightedRisk += op.amount * r;
+      runWeightedLev += op.amount * l;
     } else {
       runInvested -= op.amount;
       runWeightedRisk -= op.amount * r;
+      runWeightedLev -= op.amount * l;
     }
     const pctInv = state.totalCapital ? Math.max(0, (runInvested / state.totalCapital) * 100) : 0;
     const pctRisk = runInvested <= 0 ? 0 : Math.max(0, runWeightedRisk / runInvested);
+    const pctLev = runInvested <= 0 ? 0 : Math.max(0, Math.min(100, runWeightedLev / runInvested));
     capitalData.push(Math.round(runInvested * 100) / 100);
     invData.push(Math.round(pctInv * 10) / 10);
     riskData.push(Math.round(pctRisk * 10) / 10);
+    levData.push(Math.round(pctLev * 10) / 10);
+    levPointData.push(l);
   }
 
   const thresholdLine = sortedOps.map(() => state.threshold || null);
+  const levThresholdLine = sortedOps.map(() => state.levThreshold || null);
   const targetEurData = state.investTarget !== null ? sortedOps.map(() => Math.round((state.investTarget / 100) * state.totalCapital * 100) / 100) : [];
 
   const ctx = document.getElementById('chart-acc').getContext('2d');
@@ -1181,6 +1282,39 @@ function renderAccChart() {
           pointRadius: 0,
           tension: 0,
           yAxisID: 'y'
+        },
+        {
+          label: 'Apalancamiento puntual (%)',
+          data: levPointData,
+          borderColor: '#3b82f6',
+          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#3b82f6',
+          tension: 0.3,
+          yAxisID: 'y2',
+          borderDash: [5,5]
+        },
+        {
+          label: 'Apalancamiento acumulado (%)',
+          data: levData,
+          borderColor: '#8b5cf6',
+          borderWidth: 1.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#8b5cf6',
+          tension: 0.3,
+          yAxisID: 'y2',
+          fill: true,
+          backgroundColor: 'rgba(139,92,246,.08)'
+        },
+        {
+          label: 'Umbral apalancamiento',
+          data: levThresholdLine,
+          borderColor: '#ff4444',
+          borderWidth: 1,
+          borderDash: [4,4],
+          pointRadius: 0,
+          tension: 0,
+          yAxisID: 'y2'
         }
       ]
     },
@@ -1215,6 +1349,13 @@ function renderAccChart() {
           position: 'right',
           min: 0, max: 100,
           ticks: { color: '#f59e0b', font: { size: 9 }, callback: v => v+'%' },
+          grid: { drawOnChartArea: false }
+        },
+        y2: {
+          position: 'right',
+          offset: true,
+          min: 0, max: 100,
+          ticks: { color: '#8b5cf6', font: { size: 9 }, callback: v => v+'%' },
           grid: { drawOnChartArea: false }
         }
       }
@@ -1254,6 +1395,7 @@ function importData(e) {
         state.operations = state.operations.map(op => {
           const { pctInvested, pctRisk, ...rest } = op;
           if (rest.type === 'sell' && rest.risk === undefined) rest.risk = 0;
+          if (rest.lev === undefined) rest.lev = 0;
           return rest;
         });
       }
@@ -1276,7 +1418,8 @@ function fmt(n) {
 }
 function fmtDate(d) {
   if (!d) return '—';
-  return d;
+  const [y, m, day] = d.split('-');
+  return `${day}-${m}-${y}`;
 }
 </script>
 </body>
