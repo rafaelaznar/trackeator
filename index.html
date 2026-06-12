@@ -806,19 +806,44 @@ function render() {
   setGauge('g-inv', 'pct-inv', pctInv, pctInv >= 90 ? 'var(--danger)' : pctInv >= 70 ? 'var(--warn)' : 'var(--accent)');
   setGauge('g-risk', 'pct-risk', pctRisk, pctRisk > state.threshold && state.threshold > 0 ? 'var(--danger)' : pctRisk > state.threshold*0.8 && state.threshold > 0 ? 'var(--warn)' : 'var(--accent)');
 
-  document.getElementById('inv-abs').textContent = `${fmt(invested)} € / ${fmt(state.totalCapital)} €`;
+  let invLabel = `${fmt(invested)} € / ${fmt(state.totalCapital)} €`;
+  if (state.investTarget !== null) invLabel += ` · Objetivo: ${state.investTarget}%`;
+  document.getElementById('inv-abs').textContent = invLabel;
   document.getElementById('risk-threshold').textContent = state.threshold ? `Umbral: ${state.threshold}%` : 'Umbral: no definido';
 
-  // Warning banner: red when the threshold is exceeded, yellow from 80% of it.
-  const wb = document.getElementById('warning-banner');
+  // Warning banner: collect active warnings and display all of them.
+  const warnings = [];
+
   if (state.threshold > 0 && pctRisk > state.threshold) {
-    wb.style.display = 'block';
-    wb.className = '';
-    wb.textContent = `⚠ ALERTA: El riesgo acumulado (${pctRisk.toFixed(1)}%) supera tu umbral establecido (${state.threshold}%).`;
+    warnings.push({ severity: 'danger', text: `⚠ ALERTA: El riesgo acumulado (${pctRisk.toFixed(1)}%) supera tu umbral establecido (${state.threshold}%).` });
   } else if (state.threshold > 0 && pctRisk > state.threshold * 0.8) {
+    warnings.push({ severity: 'warn', text: `⚡ Atención: El riesgo acumulado (${pctRisk.toFixed(1)}%) se acerca al umbral (${state.threshold}%).` });
+  }
+
+  if (state.investTarget !== null) {
+    const diff = pctInv - state.investTarget;
+    if (diff < -25) {
+      warnings.push({ severity: 'danger', text: `⚠ ALERTA: Capital invertido (${pctInv.toFixed(1)}%) muy por debajo del objetivo (${state.investTarget}%).` });
+    } else if (diff < -10) {
+      warnings.push({ severity: 'warn', text: `⚡ Atención: Capital invertido (${pctInv.toFixed(1)}%) por debajo del objetivo (${state.investTarget}%).` });
+    } else if (diff > 25) {
+      warnings.push({ severity: 'warn', text: `⚡ Atención: Capital invertido (${pctInv.toFixed(1)}%) supera el objetivo (${state.investTarget}%).` });
+    }
+  }
+
+  if (state.horizon !== null && state.horizon > 0 && state.horizon < 5) {
+    const maxSafeRisk = Math.min(100, state.horizon * 15);
+    if (pctRisk > maxSafeRisk) {
+      warnings.push({ severity: 'warn', text: `⚡ Atención: Horizonte corto (${state.horizon} años) con riesgo elevado (${pctRisk.toFixed(1)}%). Considera reducir riesgo.` });
+    }
+  }
+
+  const wb = document.getElementById('warning-banner');
+  if (warnings.length > 0) {
+    const hasDanger = warnings.some(w => w.severity === 'danger');
     wb.style.display = 'block';
-    wb.className = 'warn-yellow';
-    wb.textContent = `⚡ Atención: El riesgo acumulado (${pctRisk.toFixed(1)}%) se acerca al umbral (${state.threshold}%).`;
+    wb.className = hasDanger ? '' : 'warn-yellow';
+    wb.innerHTML = warnings.map(w => `<div>${w.text}</div>`).join('');
   } else {
     wb.style.display = 'none';
   }
@@ -829,6 +854,8 @@ function render() {
   document.getElementById('s-available').textContent = state.totalCapital ? fmt(available)+' €' : '—';
   document.getElementById('s-threshold').textContent = state.threshold ? state.threshold+'%' : '—';
   document.getElementById('s-start').textContent = state.startDate ? fmtDate(state.startDate) : '—';
+  document.getElementById('s-horizon').textContent = state.horizon ? state.horizon+' años' : '—';
+  document.getElementById('s-target').textContent = state.investTarget !== null ? state.investTarget+'%' : '—';
   document.getElementById('s-ops').textContent = state.operations.length;
 
   // Color the "available" stat by how close we are to running out of capital.
@@ -951,6 +978,15 @@ function renderChart() {
           label: 'Umbral riesgo',
           data: thresholdLine,
           borderColor: '#ff4444',
+          borderWidth: 1,
+          borderDash: [4,4],
+          pointRadius: 0,
+          tension: 0
+        },
+        {
+          label: 'Objetivo invertido',
+          data: state.investTarget !== null ? sorted.map(() => state.investTarget) : [],
+          borderColor: '#22c55e',
           borderWidth: 1,
           borderDash: [4,4],
           pointRadius: 0,
