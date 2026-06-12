@@ -123,6 +123,7 @@
     font-size: 12px; padding: 5px 8px; font-family: var(--font-mono);
     outline: none;
   }
+  .field:has(input[type="date"]) { cursor: pointer; }
   .field input:focus, .field select:focus { border-color: var(--accent); }
   .field select option { background: var(--bg); }
 
@@ -285,6 +286,14 @@
       <div class="stat-value" id="s-threshold">—</div>
     </div>
     <div class="stat">
+      <div class="stat-label">Horizonte</div>
+      <div class="stat-value" id="s-horizon">—</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Capital objetivo</div>
+      <div class="stat-value" id="s-target">—</div>
+    </div>
+    <div class="stat">
       <div class="stat-label">Inicio</div>
       <div class="stat-value" id="s-start">—</div>
     </div>
@@ -312,7 +321,7 @@
         <input type="number" id="buy-risk" min="0" max="100" step="0.1" placeholder="0–100">
       </div>
       <div class="field">
-        <label>Fecha</label>
+        <label for="buy-date">Fecha</label>
         <input type="date" id="buy-date">
       </div>
     </div>
@@ -331,7 +340,7 @@
         <input type="number" id="sell-amount" min="0" step="0.01" placeholder="0.00">
       </div>
       <div class="field">
-        <label>Fecha</label>
+        <label for="sell-date">Fecha</label>
         <input type="date" id="sell-date">
       </div>
     </div>
@@ -368,26 +377,27 @@
       <input type="number" id="cfg-total" min="0" step="0.01" placeholder="10000">
     </div>
     <div class="field">
-      <label>Fecha de inicio de la inversión</label>
+      <label for="cfg-start">Fecha de inicio de la inversión</label>
       <input type="date" id="cfg-start">
     </div>
     <div style="border-top:1px solid var(--border);margin:14px 0;padding-top:14px">
-      <div class="panel-title" style="margin-bottom:10px">Cálculo del umbral de riesgo</div>
+      <div class="panel-title" style="margin-bottom:10px">Parámetros del plan</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="field">
-          <label>Edad del inversor (años)</label>
-          <input type="number" id="cfg-age" min="18" max="100" placeholder="40" oninput="recalcThreshold()">
+          <label>Horizonte temporal (años)</label>
+          <input type="number" id="cfg-horizon" min="1" max="100" step="1" placeholder="10">
+          <div class="risk-help">Años previstos para mantener la inversión.</div>
         </div>
         <div class="field">
-          <label>% del capital sobre patrimonio total</label>
-          <input type="number" id="cfg-pct-wealth" min="1" max="100" placeholder="30" oninput="recalcThreshold()">
-          <div class="risk-help">ej: si tienes 100.000€ y vas a invertir 10.000€ → 10%</div>
+          <label>Umbral de capital objetivo (%)</label>
+          <input type="number" id="cfg-invest-target" min="0" max="100" step="0.1" placeholder="80">
+          <div class="risk-help">% del capital total que quieres tener invertido.</div>
         </div>
       </div>
       <div class="field" style="margin-top:6px">
-        <label>Umbral de riesgo calculado (editable)</label>
+        <label>Umbral de riesgo (%)</label>
         <input type="number" id="cfg-threshold" min="0" max="100" step="0.1" placeholder="0–100">
-        <div class="risk-help" id="threshold-explain" style="margin-top:4px;line-height:1.6"></div>
+        <div class="risk-help" style="margin-top:4px;line-height:1.6">Riesgo máximo que estás dispuesto a asumir sobre el capital invertido.</div>
       </div>
     </div>
     <div class="modal-actions">
@@ -411,7 +421,7 @@
         </select>
       </div>
       <div class="field">
-        <label>Fecha</label>
+        <label for="edit-date">Fecha</label>
         <input type="date" id="edit-date">
       </div>
     </div>
@@ -438,29 +448,53 @@
 </div>
 
 <script>
-// ─── STATE ──────────────────────────────────────────────────────────────────
+/**
+ * State shape:
+ *   totalCapital  {number}      - Total capital available to invest (€).
+ *   startDate     {string}      - ISO date (YYYY-MM-DD) when the plan starts.
+ *   threshold     {number}      - Maximum acceptable weighted risk (0-100),
+ *                                 entered directly by the user.
+ *   horizon       {number|null} - Investment time horizon in years (>= 1).
+ *   investTarget  {number|null} - Target % of total capital to be invested
+ *                                 (0-100). Used to detect under/over-investing.
+ *   operations    {Operation[]} - Ordered list of buy/sell operations.
+ *
+ * Operation shape:
+ *   { type: 'buy'|'sell', amount: number, risk: number|null, date: string, desc: string }
+ *
+ * Note: per-operation `pctInvested` and `pctRisk` are NOT stored. They are
+ * derived on demand from the operations list and the current configuration.
+ */
 let state = {
   totalCapital: 0,
   startDate: '',
   threshold: 0,
-  age: null,
-  pctWealth: null,
-  operations: []   // {type, amount, risk, date, desc, pctInvested, pctRisk}
+  horizon: null,
+  investTarget: null,
+  operations: []
 };
 
-const CIRC = 2 * Math.PI * 45; // 282.74
+// Circumference of the gauge circles (radius = 45).
+const CIRC = 2 * Math.PI * 45; // ≈ 282.74
 let chartInst = null;
 
-// ─── INIT ────────────────────────────────────────────────────────────────────
+/**
+ * Entry point: restore persisted state, default the date inputs to today,
+ * show the setup prompt when no capital has been configured yet, and render.
+ */
 window.onload = () => {
   loadFromStorage();
   setTodayDates();
+  initDatePickers();
   if (!state.totalCapital) {
     document.getElementById('setup-prompt').style.display = 'block';
   }
   render();
 };
 
+/**
+ * Pre-fill any empty date input (buy/sell) with today's date in ISO format.
+ */
 function setTodayDates() {
   const today = new Date().toISOString().split('T')[0];
   ['buy-date','sell-date'].forEach(id => {
@@ -469,30 +503,73 @@ function setTodayDates() {
   });
 }
 
-// ─── STORAGE ─────────────────────────────────────────────────────────────────
+function initDatePickers() {
+  document.querySelectorAll('.field input[type="date"]').forEach(el => {
+    const field = el.closest('.field');
+    if (!field) return;
+    field.addEventListener('click', () => {
+      try { el.showPicker(); } catch (_) {}
+    });
+  });
+}
+
+/**
+ * Persist the current state to localStorage. Silently swallows quota errors
+ * so a failing write does not break the UI.
+ */
 function saveToStorage() {
   try { localStorage.setItem('inv_tracker', JSON.stringify(state)); } catch(e) {}
 }
+
+/**
+ * Restore state from localStorage. Strips legacy per-operation percentage
+ * fields (`pctInvested`, `pctRisk`) and legacy configuration keys (`age`,
+ * `pctWealth`) so that older data files do not leak into the new model.
+ */
 function loadFromStorage() {
   try {
     const d = localStorage.getItem('inv_tracker');
-    if (d) state = JSON.parse(d);
+    if (d) {
+      state = JSON.parse(d);
+      if (Array.isArray(state.operations)) {
+        state.operations = state.operations.map(op => {
+          const { pctInvested, pctRisk, ...rest } = op;
+          return rest;
+        });
+      }
+      delete state.age;
+      delete state.pctWealth;
+    }
   } catch(e) {}
 }
 
-// ─── SETTINGS ────────────────────────────────────────────────────────────────
+/**
+ * Open the settings modal pre-populated with the current configuration.
+ */
 function openSettings() {
   document.getElementById('cfg-total').value = state.totalCapital || '';
   document.getElementById('cfg-start').value = state.startDate || new Date().toISOString().split('T')[0];
-  document.getElementById('cfg-age').value = state.age || '';
-  document.getElementById('cfg-pct-wealth').value = state.pctWealth || '';
+  document.getElementById('cfg-horizon').value = state.horizon || '';
+  document.getElementById('cfg-invest-target').value = state.investTarget || '';
   document.getElementById('cfg-threshold').value = state.threshold || '';
-  recalcThreshold();
   document.getElementById('modal-settings').classList.add('open');
 }
+
+/** Close the settings modal without persisting changes. */
 function closeSettings() {
   document.getElementById('modal-settings').classList.remove('open');
 }
+
+/**
+ * Validate the settings form, persist the new configuration to state and
+ * localStorage, hide the setup prompt and re-render the UI.
+ *
+ *   total        - Total capital available to invest (€).
+ *   start        - Plan start date (ISO YYYY-MM-DD).
+ *   horizon      - Investment horizon in years (optional, integer >= 1).
+ *   investTarget - Target % of capital to be invested (optional, 0-100).
+ *   threshold    - Maximum acceptable weighted risk (0-100).
+ */
 function saveSettings() {
   const total = parseFloat(document.getElementById('cfg-total').value);
   const start = document.getElementById('cfg-start').value;
@@ -500,37 +577,33 @@ function saveSettings() {
   if (!total || total <= 0) { alert('Introduce un capital válido.'); return; }
   if (!start) { alert('Introduce una fecha de inicio.'); return; }
   if (isNaN(threshold) || threshold < 0 || threshold > 100) { alert('El umbral debe estar entre 0 y 100.'); return; }
+
+  const horizonRaw = document.getElementById('cfg-horizon').value;
+  const horizon = horizonRaw === '' ? null : parseInt(horizonRaw, 10);
+  if (horizon !== null && (isNaN(horizon) || horizon < 1)) { alert('El horizonte temporal debe ser un entero >= 1.'); return; }
+
+  const targetRaw = document.getElementById('cfg-invest-target').value;
+  const investTarget = targetRaw === '' ? null : parseFloat(targetRaw);
+  if (investTarget !== null && (isNaN(investTarget) || investTarget < 0 || investTarget > 100)) {
+    alert('El umbral de capital objetivo debe estar entre 0 y 100.'); return;
+  }
+
   state.totalCapital = total;
   state.startDate = start;
   state.threshold = threshold;
-  state.age = parseFloat(document.getElementById('cfg-age').value) || null;
-  state.pctWealth = parseFloat(document.getElementById('cfg-pct-wealth').value) || null;
+  state.horizon = horizon;
+  state.investTarget = investTarget;
   saveToStorage();
   closeSettings();
   document.getElementById('setup-prompt').style.display = 'none';
   render();
 }
 
-function recalcThreshold() {
-  const age = parseFloat(document.getElementById('cfg-age').value);
-  const pct = parseFloat(document.getElementById('cfg-pct-wealth').value);
-  const el = document.getElementById('threshold-explain');
-  if (!age || !pct) { el.textContent = ''; return; }
-  // Formula: base age factor (100-age rule) * wealth concentration factor
-  // riesgo_edad = max(0, min(100, 100 - age))
-  // factor_patrimonio = pct <= 10 → 1.0, 10-30 → 0.75, 30-50 → 0.5, >50 → 0.25
-  const riskAge = Math.max(0, Math.min(100, 100 - age));
-  let wf;
-  if (pct <= 10) wf = 1.0;
-  else if (pct <= 30) wf = 0.75;
-  else if (pct <= 50) wf = 0.5;
-  else wf = 0.25;
-  const suggested = Math.round(riskAge * wf * 10) / 10;
-  document.getElementById('cfg-threshold').value = suggested;
-  el.innerHTML = `Regla 100-edad: ${riskAge.toFixed(0)}% · Factor concentración (${pct}% patrimonio): ×${wf} → <strong style="color:var(--accent)">${suggested}%</strong>`;
-}
-
-// ─── OPERATIONS ──────────────────────────────────────────────────────────────
+/**
+ * Show the requested tab/form (buy or sell) and toggle the active styling.
+ *
+ * @param {'buy'|'sell'} tab
+ */
 function switchTab(tab) {
   ['buy','sell'].forEach(t => {
     document.getElementById('tab-'+t).classList.toggle('active', t===tab);
@@ -538,6 +611,14 @@ function switchTab(tab) {
   });
 }
 
+/**
+ * Add a new buy or sell operation. Validates input, asks for confirmation
+ * when the buy exceeds available capital, and clears the form on success.
+ * Per-operation percentage snapshots are not stored; they are recomputed
+ * on every render.
+ *
+ * @param {'buy'|'sell'} type
+ */
 function addOperation(type) {
   if (!state.totalCapital) { alert('Configura los datos iniciales primero.'); openSettings(); return; }
   if (type === 'buy') {
@@ -552,18 +633,14 @@ function addOperation(type) {
     if (currentInvested + amount > state.totalCapital) {
       if (!confirm(`Esta compra supera el capital disponible (quedan ${fmt(state.totalCapital - currentInvested)} €). ¿Continuar?`)) return;
     }
-    const snap = getSnapshot(amount, type);
-    state.operations.push({ type:'buy', amount, risk, date, desc,
-      pctInvested: snap.pctInvested, pctRisk: snap.pctRisk });
+    state.operations.push({ type:'buy', amount, risk, date, desc });
   } else {
     const amount = parseFloat(document.getElementById('sell-amount').value);
     const date = document.getElementById('sell-date').value;
     const desc = document.getElementById('sell-desc').value.trim();
     if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
     if (!date) { alert('Introduce una fecha.'); return; }
-    const snap = getSnapshot(-amount, type);
-    state.operations.push({ type:'sell', amount, risk: null, date, desc,
-      pctInvested: snap.pctInvested, pctRisk: snap.pctRisk });
+    state.operations.push({ type:'sell', amount, risk: null, date, desc });
   }
   saveToStorage();
   render();
@@ -573,12 +650,20 @@ function addOperation(type) {
   });
 }
 
+/**
+ * Net invested capital = sum of buys - sum of sells. Sells cannot go below
+ * zero here, so this is the current "position size" in euros.
+ */
 function calcInvested() {
   return state.operations.reduce((s, op) => op.type==='buy' ? s+op.amount : s-op.amount, 0);
 }
 
+/**
+ * Weighted average risk of all buy operations. Weights are the buy amounts,
+ * so larger positions have a proportionally larger influence on the result.
+ * Returns 0 when no buys have been recorded.
+ */
 function calcWeightedRisk() {
-  // weighted average risk of current invested capital
   let totalBought = 0, weightedRisk = 0;
   for (const op of state.operations) {
     if (op.type === 'buy') {
@@ -586,35 +671,15 @@ function calcWeightedRisk() {
       weightedRisk += op.amount * op.risk;
     }
   }
-  const totalSold = state.operations.filter(o=>o.type==='sell').reduce((s,o)=>s+o.amount,0);
-  const netInvested = Math.max(0, totalBought - totalSold);
-  if (totalBought === 0) return 0;
-  const avgRisk = weightedRisk / totalBought;
-  return avgRisk; // weighted average risk of bought positions
-}
-
-function getSnapshot(delta, type) {
-  const invested = calcInvested() + (type==='buy' ? delta : delta);
-  const pctInvested = state.totalCapital ? Math.max(0, (invested / state.totalCapital)*100) : 0;
-  const pctRisk = calcWeightedRiskAfter(delta, type);
-  return { pctInvested: Math.round(pctInvested*10)/10, pctRisk: Math.round(pctRisk*10)/10 };
-}
-
-function calcWeightedRiskAfter(delta, type) {
-  // simulate after adding op
-  const ops = [...state.operations];
-  if (type==='buy') ops.push({type:'buy', amount:delta, risk: parseFloat(document.getElementById('buy-risk').value)||0});
-  let totalBought = 0, weightedRisk = 0;
-  for (const op of ops) {
-    if (op.type === 'buy') {
-      totalBought += op.amount;
-      weightedRisk += op.amount * op.risk;
-    }
-  }
   if (totalBought === 0) return 0;
   return weightedRisk / totalBought;
 }
 
+/**
+ * Remove every operation from the history, keeping the configuration intact.
+ * Asks the user to confirm because the action cannot be undone (other than
+ * via an exported JSON backup).
+ */
 function clearHistory() {
   if (!confirm('¿Eliminar todas las operaciones? Los datos de configuración se conservarán.')) return;
   state.operations = [];
@@ -622,134 +687,115 @@ function clearHistory() {
   render();
 }
 
-// ─── EDIT OPERATIONS ─────────────────────────────────────────────────────────
+/**
+ * Open the edit modal pre-filled with the values of the operation at the
+ * given index, then show/hide the risk field based on the operation type.
+ *
+ * @param {number} index - Position of the operation in `state.operations`.
+ */
 function openEdit(index) {
   const op = state.operations[index];
   if (!op) return;
-  
+
   document.getElementById('edit-index').value = index;
   document.getElementById('edit-type').value = op.type;
   document.getElementById('edit-date').value = op.date;
   document.getElementById('edit-amount').value = op.amount;
   document.getElementById('edit-risk').value = op.risk || 0;
   document.getElementById('edit-desc').value = op.desc || '';
-  
+
   toggleEditRisk();
   document.getElementById('edit-modal-title').textContent = op.type === 'buy' ? 'Editar compra' : 'Editar venta';
   document.getElementById('modal-edit').classList.add('open');
 }
 
+/** Close the edit modal without persisting changes. */
 function closeEdit() {
   document.getElementById('modal-edit').classList.remove('open');
 }
 
+/**
+ * Show or hide the risk input in the edit modal depending on the selected
+ * operation type. Sells do not carry a per-operation risk value.
+ */
 function toggleEditRisk() {
   const type = document.getElementById('edit-type').value;
   const riskField = document.getElementById('edit-risk-field');
   riskField.style.display = type === 'buy' ? 'block' : 'none';
 }
 
+/**
+ * Validate the edit form, replace the operation at the stored index with the
+ * new values, persist and re-render. Since per-operation percentages are
+ * recomputed on render, no manual snapshot bookkeeping is required.
+ */
 function saveEdit() {
   const index = parseInt(document.getElementById('edit-index').value);
   const type = document.getElementById('edit-type').value;
   const date = document.getElementById('edit-date').value;
   const amount = parseFloat(document.getElementById('edit-amount').value);
   const desc = document.getElementById('edit-desc').value.trim();
-  
+
   if (!date) { alert('Introduce una fecha.'); return; }
   if (!amount || amount <= 0) { alert('Introduce un importe válido.'); return; }
-  
+
   let risk = null;
   if (type === 'buy') {
     risk = parseFloat(document.getElementById('edit-risk').value);
     if (isNaN(risk) || risk < 0 || risk > 100) { alert('El riesgo debe estar entre 0 y 100.'); return; }
   }
-  
-  // Recalculate percentages for all operations after this one
-  const opsBefore = state.operations.slice(0, index);
-  const opsAfter = state.operations.slice(index + 1);
-  
-  // Create temporary state with operations before this one
-  const tempState = { ...state, operations: [...opsBefore] };
-  
-  // Calculate snapshot for the edited operation
-  const invested = calcInvestedFromOps(opsBefore);
-  const weightedRisk = calcWeightedRiskFromOps(opsBefore);
-  
-  const newOp = {
-    type,
-    amount,
-    risk,
-    date,
-    desc,
-    pctInvested: 0,
-    pctRisk: 0
-  };
-  
-  // Add the edited operation
-  const opsWithEdit = [...opsBefore, newOp];
-  newOp.pctInvested = state.totalCapital ? Math.max(0, ((invested + (type === 'buy' ? amount : -amount)) / state.totalCapital) * 100) : 0;
-  newOp.pctRisk = calcWeightedRiskFromOps(opsWithEdit);
-  
-  // Recalculate percentages for operations after
-  const finalOps = [newOp];
-  for (const op of opsAfter) {
-    const currentInvested = calcInvestedFromOps(finalOps);
-    const currentRisk = calcWeightedRiskFromOps(finalOps);
-    const updatedOp = {
-      ...op,
-      pctInvested: state.totalCapital ? Math.max(0, ((currentInvested + (op.type === 'buy' ? op.amount : -op.amount)) / state.totalCapital) * 100) : 0,
-      pctRisk: calcWeightedRiskFromOps([...finalOps, op])
-    };
-    finalOps.push(updatedOp);
-  }
-  
-  state.operations = [...opsBefore, newOp, ...finalOps.slice(1)];
+
+  state.operations[index] = { type, amount, risk, date, desc };
   saveToStorage();
   closeEdit();
   render();
 }
 
+/**
+ * Remove the operation at the given index after asking for confirmation.
+ *
+ * @param {number} index - Position of the operation in `state.operations`.
+ */
 function deleteOperation(index) {
   if (!confirm('¿Eliminar esta operación?')) return;
-  
-  const opsBefore = state.operations.slice(0, index);
-  const opsAfter = state.operations.slice(index + 1);
-  
-  // Recalculate percentages for all operations after the deleted one
-  const finalOps = [...opsBefore];
-  for (const op of opsAfter) {
-    const currentInvested = calcInvestedFromOps(finalOps);
-    const updatedOp = {
-      ...op,
-      pctInvested: state.totalCapital ? Math.max(0, ((currentInvested + (op.type === 'buy' ? op.amount : -op.amount)) / state.totalCapital) * 100) : 0,
-      pctRisk: calcWeightedRiskFromOps([...finalOps, op])
-    };
-    finalOps.push(updatedOp);
-  }
-  
-  state.operations = finalOps;
+  state.operations.splice(index, 1);
   saveToStorage();
   render();
 }
 
-function calcInvestedFromOps(ops) {
-  return ops.reduce((s, op) => op.type === 'buy' ? s + op.amount : s - op.amount, 0);
-}
-
-function calcWeightedRiskFromOps(ops) {
-  let totalBought = 0, weightedRisk = 0;
-  for (const op of ops) {
+/**
+ * Recompute the cumulative invested % and weighted risk % as if every
+ * operation from the start of the list up to (and including) the operation
+ * at `index` had already been applied. Used to derive the snapshot
+ * percentages shown in the history table and the chart.
+ *
+ * @param {number} index - Inclusive index in `state.operations`.
+ * @returns {{ pctInvested: number, pctRisk: number }}
+ */
+function getSnapshotAt(index) {
+  const slice = state.operations.slice(0, index + 1);
+  let invested = 0;
+  let totalBought = 0;
+  let weightedRisk = 0;
+  for (const op of slice) {
+    invested += op.type === 'buy' ? op.amount : -op.amount;
     if (op.type === 'buy') {
       totalBought += op.amount;
       weightedRisk += op.amount * op.risk;
     }
   }
-  if (totalBought === 0) return 0;
-  return weightedRisk / totalBought;
+  const pctInvested = state.totalCapital ? Math.max(0, (invested / state.totalCapital) * 100) : 0;
+  const pctRisk = totalBought === 0 ? 0 : weightedRisk / totalBought;
+  return {
+    pctInvested: Math.round(pctInvested * 10) / 10,
+    pctRisk: Math.round(pctRisk * 10) / 10
+  };
 }
 
-// ─── RENDER ──────────────────────────────────────────────────────────────────
+/**
+ * Main render entry point: updates gauges, warning banner, stats, history
+ * table and chart from the current state.
+ */
 function render() {
   const invested = calcInvested();
   const pctInv = state.totalCapital ? Math.max(0, (invested/state.totalCapital)*100) : 0;
@@ -763,7 +809,7 @@ function render() {
   document.getElementById('inv-abs').textContent = `${fmt(invested)} € / ${fmt(state.totalCapital)} €`;
   document.getElementById('risk-threshold').textContent = state.threshold ? `Umbral: ${state.threshold}%` : 'Umbral: no definido';
 
-  // Warning
+  // Warning banner: red when the threshold is exceeded, yellow from 80% of it.
   const wb = document.getElementById('warning-banner');
   if (state.threshold > 0 && pctRisk > state.threshold) {
     wb.style.display = 'block';
@@ -777,7 +823,7 @@ function render() {
     wb.style.display = 'none';
   }
 
-  // Stats
+  // Stats row
   document.getElementById('s-total').textContent = state.totalCapital ? fmt(state.totalCapital)+' €' : '—';
   document.getElementById('s-invested').textContent = state.totalCapital ? fmt(invested)+' €' : '—';
   document.getElementById('s-available').textContent = state.totalCapital ? fmt(available)+' €' : '—';
@@ -785,7 +831,7 @@ function render() {
   document.getElementById('s-start').textContent = state.startDate ? fmtDate(state.startDate) : '—';
   document.getElementById('s-ops').textContent = state.operations.length;
 
-  // Color s-available
+  // Color the "available" stat by how close we are to running out of capital.
   const el = document.getElementById('s-available');
   el.className = 'stat-value' + (available < state.totalCapital*0.1 ? ' danger' : available < state.totalCapital*0.3 ? ' warn' : ' accent');
 
@@ -793,6 +839,15 @@ function render() {
   renderChart();
 }
 
+/**
+ * Animate a single circular gauge to the given percentage using the
+ * provided color. The percentage is clamped to the [0, 100] range.
+ *
+ * @param {string} fillId  - DOM id of the SVG circle whose stroke fills.
+ * @param {string} pctId   - DOM id of the centered percentage label.
+ * @param {number} pct     - Target percentage to display.
+ * @param {string} color   - CSS color applied to the arc and label.
+ */
 function setGauge(fillId, pctId, pct, color) {
   const clamped = Math.min(100, Math.max(0, pct));
   const offset = CIRC - (clamped/100)*CIRC;
@@ -803,16 +858,22 @@ function setGauge(fillId, pctId, pct, color) {
   document.getElementById(pctId).style.color = color;
 }
 
+/**
+ * Render the operations history table sorted by date (most recent first).
+ * Each row's percentage columns are derived from the running totals at the
+ * time that operation was applied, computed via `getSnapshotAt`.
+ */
 function renderHistory() {
   const body = document.getElementById('history-body');
   if (!state.operations.length) {
     body.innerHTML = '<div class="no-data">Sin operaciones registradas.</div>';
     return;
   }
-  const rows = [...state.operations]
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .map((op, i) => {
-      const realIndex = state.operations.indexOf(op);
+  const rows = state.operations
+    .map((op, i) => ({ op, i }))
+    .sort((a, b) => b.op.date.localeCompare(a.op.date))
+    .map(({ op, i }) => {
+      const { pctInvested, pctRisk } = getSnapshotAt(i);
       const tag = op.type==='buy'
         ? '<span class="tag tag-buy">COMPRA</span>'
         : '<span class="tag tag-sell">VENTA</span>';
@@ -822,12 +883,12 @@ function renderHistory() {
         <td>${tag}</td>
         <td>${fmt(op.amount)} €</td>
         <td>${risk}</td>
-        <td>${op.pctInvested.toFixed(1)}%</td>
-        <td>${op.pctRisk.toFixed(1)}%</td>
+        <td>${pctInvested.toFixed(1)}%</td>
+        <td>${pctRisk.toFixed(1)}%</td>
         <td style="color:var(--muted)">${op.desc||'—'}</td>
         <td class="actions">
-          <button class="btn-icon" onclick="openEdit(${realIndex})" title="Editar">✎</button>
-          <button class="btn-icon del" onclick="deleteOperation(${realIndex})" title="Eliminar">✕</button>
+          <button class="btn-icon" onclick="openEdit(${i})" title="Editar">✎</button>
+          <button class="btn-icon del" onclick="deleteOperation(${i})" title="Eliminar">✕</button>
         </td>
       </tr>`;
     }).join('');
@@ -839,15 +900,22 @@ function renderHistory() {
   </table>`;
 }
 
+/**
+ * Render the line chart of cumulative invested % and weighted risk % over
+ * time. A dashed horizontal line marks the configured risk threshold, when
+ * defined. Chart instance is destroyed and recreated on every render to
+ * avoid leaking Chart.js listeners.
+ */
 function renderChart() {
   if (!state.operations.length) {
     if (chartInst) { chartInst.destroy(); chartInst = null; }
     return;
   }
-  const sorted = [...state.operations].sort((a,b) => a.date.localeCompare(b.date));
-  const labels = sorted.map(o => fmtDate(o.date));
-  const invData = sorted.map(o => o.pctInvested);
-  const riskData = sorted.map(o => o.pctRisk);
+  const indexed = state.operations.map((op, i) => ({ op, i }));
+  const sorted = [...indexed].sort((a, b) => a.op.date.localeCompare(b.op.date));
+  const labels = sorted.map(({ op }) => fmtDate(op.date));
+  const invData = sorted.map(({ i }) => getSnapshotAt(i).pctInvested);
+  const riskData = sorted.map(({ i }) => getSnapshotAt(i).pctRisk);
   const thresholdLine = sorted.map(() => state.threshold || null);
 
   const ctx = document.getElementById('chart').getContext('2d');
@@ -921,7 +989,10 @@ function renderChart() {
   });
 }
 
-// ─── EXPORT / IMPORT ─────────────────────────────────────────────────────────
+/**
+ * Download the current state as a JSON file named with today's date so the
+ * user can keep historical snapshots or restore them later via Import.
+ */
 function exportData() {
   const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
   const a = document.createElement('a');
@@ -929,6 +1000,14 @@ function exportData() {
   a.download = `inversiones_${new Date().toISOString().split('T')[0]}.json`;
   a.click();
 }
+
+/**
+ * Replace the current state with the contents of a user-selected JSON file.
+ * The file must contain at least one of `totalCapital` or `operations`; any
+ * legacy per-operation percentage fields are stripped on the next load.
+ *
+ * @param {Event} e - Change event from the hidden file input.
+ */
 function importData(e) {
   const file = e.target.files[0];
   if (!file) return;
